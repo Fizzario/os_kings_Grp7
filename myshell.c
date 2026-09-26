@@ -25,7 +25,7 @@ returns token count or -1
 static int tokenize(char *line, char *tokens[]) {
   int count = 0;
 
-  // first call takes string, runs of whitespace are one separator
+  // First call takes string, runs of whitespace are one separator
   char *t = strtok(line, " \t");
 
   while (t != NULL) {
@@ -85,4 +85,5 @@ int main(void) {
   }
 
   return EXIT_SUCCESS;
+
 }
