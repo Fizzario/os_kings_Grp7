@@ -1,28 +1,74 @@
-/*
-parser.c : turns a command line into a command
-
-splits the line into tokens
-collects the tokens into a command
-pulls out the redirection files
-*/
-
 #include <stdio.h>   // printf()
-#include <string.h>  // strtok(), strcmp()
+#include <string.h>  // strcmp(), strcpy()
 #include "myshell.h"
 
 #define MAX_TOKENS 128 
 
-// splits lines into tokens, tokens point into line itself, strtok writes terminators
+// operators end a word even with no space around them
 static int tokenize(char *line, char *tokens[]) {
+
+  // holds the text of every token
+  static char store[MAX_TOKENS][MAX_LINE];
+
   int count = 0;
+  int i = 0;
+  char c;
 
-  // First call takes string, runs of whitespace are one separator
-  char *t = strtok(line, " \t");
+  while (line[i] != '\0') {
+    c = line[i];
 
-  while (t != NULL) {
+    // spaces and tabs between tokens are skipped
+    if (c == ' ' || c == '\t') {
+      i++;
+      continue;
+    }
+
     if (count >= MAX_TOKENS) return -1;
-    tokens[count++] = t;
-    t = strtok(NULL, " \t");
+
+    if (c == '<') {
+      strcpy(store[count], "<");
+      i += 1;
+    }
+
+    else if (c == '>') {
+
+      // a second > makes it the append form
+      if (line[i + 1] == '>') {
+        strcpy(store[count], ">>");
+        i += 2;
+      } else {
+        strcpy(store[count], ">");
+        i += 1;
+      }
+    }
+
+    // 2> only counts here at the start of a token
+    else if (c == '2' && line[i + 1] == '>') {
+
+      if (line[i + 2] == '>') {
+        strcpy(store[count], "2>>");
+        i += 3;
+      } else {
+        strcpy(store[count], "2>");
+        i += 2;
+      }
+    }
+
+    else {
+
+      // a normal word runs until a space or an operator character
+      int j = 0;
+
+      while (line[i] != '\0' && line[i] != ' ' && line[i] != '\t' &&
+             line[i] != '<'  && line[i] != '>') {
+        store[count][j++] = line[i++];
+      }
+
+      store[count][j] = '\0';
+    }
+
+    tokens[count] = store[count];
+    count++;
   }
 
   return count;
