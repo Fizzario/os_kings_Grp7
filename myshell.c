@@ -55,6 +55,15 @@ int main(void) {
     for (i = 1; i < cmd.argc; i++) {
       printf("  Arg %d: [%s]\n", i, cmd.argv[i]);
     }
+    if (cmd.infile != NULL) {
+      printf("  Input: [%s]\n", cmd.infile);
+    }
+    if (cmd.outfile != NULL) {
+      printf("  Output: [%s] append=%d\n", cmd.outfile, cmd.append_out);
+    }
+    if (cmd.errfile != NULL) {
+      printf("  Error: [%s] append=%d\n", cmd.errfile, cmd.append_err);
+    }
   }
 
   return EXIT_SUCCESS;
