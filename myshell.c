@@ -4,7 +4,8 @@ myshell : basic unix shell
 shows prompt
 reads command line from user
 splits line into tokens
-will later hand tokens to parser.
+builds a command from the tokens
+will later hand the command to the executor
 */
 
 #include <stdio.h>    // printf(), fgets(), fflush()
@@ -13,7 +14,14 @@ will later hand tokens to parser.
 
 #define MAX_LINE 1024  
 #define MAX_TOKENS 128 
+#define MAX_ARGS 64    
 
+
+
+typedef struct {
+  char *argv[MAX_ARGS]; 
+  int argc;              // how many arguments, not counting NULL
+} command_t;
 
 
 /*
@@ -38,9 +46,31 @@ static int tokenize(char *line, char *tokens[]) {
 }
 
 
+// fills cmd with tokens as args
+static int parse_command(char *tokens[], int ntokens, command_t *cmd) {
+  int i;
+
+  cmd->argc = 0;
+
+  for (i = 0; i < ntokens; i++) {
+
+    // one slot is free for NULL
+    if (cmd->argc >= MAX_ARGS - 1) return -1;
+
+    cmd->argv[cmd->argc++] = tokens[i];
+  }
+
+  // NULL ends arguments list
+  cmd->argv[cmd->argc] = NULL;
+
+  return 0;
+}
+
+
 int main(void) {
   char line[MAX_LINE];
   char *tokens[MAX_TOKENS];
+  command_t cmd;
   int ntokens;
   int i;
 
@@ -78,9 +108,16 @@ int main(void) {
       continue;
     }
 
-    // Temporary: printing tokens to confirm that splitting works
-    for (i = 0; i < ntokens; i++) {
-      printf("Token %d: [%s]\n", i, tokens[i]);
+    // too many arguments
+    if (parse_command(tokens, ntokens, &cmd) != 0) {
+      printf("Too many arguments.\n");
+      continue;
+    }
+
+    // Temporary: printing the command to confirm that parsing works
+    printf("Program: [%s]\n", cmd.argv[0]);
+    for (i = 1; i < cmd.argc; i++) {
+      printf("  Arg %d: [%s]\n", i, cmd.argv[i]);
     }
   }
 
