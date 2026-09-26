@@ -3,7 +3,7 @@ myshell : basic unix shell
 
 shows prompt
 reads command line from user
-will later hand line to parser
+will later hand line to parser.
 */
 
 #include <stdio.h>    // printf(), fgets(), fflush()
