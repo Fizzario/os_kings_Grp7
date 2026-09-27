@@ -1,0 +1,32 @@
+ls
+ls -l -a
+./hello
+ls -l > out.txt
+sort < in.txt
+ls >> log.txt
+gcc x.c 2> err.log
+gcc x.c 2>> err.log
+ls>out.txt
+cat<in.txt
+gcc x.c 2>err.log
+sort<in.txt>>log.txt
+echo file2
+ls -l | grep txt
+ls|wc
+ls -l | grep txt | wc -l
+cat < in.txt | sort
+ls | wc -l > out.txt
+ls | grep txt 2> err.log
+sort < in.txt > out.txt
+cat < in.txt | sort | uniq > out.txt
+cat < in.txt | sort 2> err.log | uniq > out.txt
+cat < in.txt | sort 2>> err.log | uniq >> out.txt
+cat 
+ls >
+ls >>
+gcc x.c 2>
+gcc x.c 2>>
+ls |
+ls | | wc
+| wc
+ls | > out.txt
