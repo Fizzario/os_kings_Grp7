@@ -13,5 +13,8 @@ parser.o: parser.c myshell.h
 executor.o: executor.c myshell.h
 	$(CC) $(CFLAGS) -c executor.c
 
+test: myshell
+	bash tests/run_tests.sh
+
 clean:
 	rm -f myshell *.o
