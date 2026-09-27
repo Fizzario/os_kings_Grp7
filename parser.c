@@ -30,6 +30,11 @@ static int tokenize(char *line, char *tokens[]) {
       i += 1;
     }
 
+    else if (c == '|') {
+      strcpy(store[count], "|");
+      i += 1;
+    }
+
     else if (c == '>') {
 
       // a second > makes it the append form
@@ -60,7 +65,7 @@ static int tokenize(char *line, char *tokens[]) {
       int j = 0;
 
       while (line[i] != '\0' && line[i] != ' ' && line[i] != '\t' &&
-             line[i] != '<'  && line[i] != '>') {
+             line[i] != '<'  && line[i] != '>' && line[i] != '|') {
         store[count][j++] = line[i++];
       }
 
@@ -95,19 +100,19 @@ static void init_command(command_t *cmd) {
 
 
 // fills cmd with tokens as arguments and redirection files, returns 0 or -1
-static int parse_command(char *tokens[], int ntokens, command_t *cmd) {
-  int i = 0;
+static int parse_command(char *tokens[], int start, int stop, command_t *cmd) {
+  int i = start;
   char *t;
 
   init_command(cmd);
 
-  while (i < ntokens) {
+  while (i < stop) {
     t = tokens[i];
 
     if (strcmp(t, "<") == 0) {
 
         // missing filename
-      if (i + 1 >= ntokens || is_operator(tokens[i + 1])) {
+      if (i + 1 >= stop || is_operator(tokens[i + 1])) {
         printf("Input file not specified.\n");
         return -1;
       }
@@ -118,7 +123,7 @@ static int parse_command(char *tokens[], int ntokens, command_t *cmd) {
 
     else if (strcmp(t, ">") == 0 || strcmp(t, ">>") == 0) {
 
-      if (i + 1 >= ntokens || is_operator(tokens[i + 1])) {
+      if (i + 1 >= stop || is_operator(tokens[i + 1])) {
         printf("Output file not specified.\n");
         return -1;
       }
@@ -132,7 +137,7 @@ static int parse_command(char *tokens[], int ntokens, command_t *cmd) {
 
     else if (strcmp(t, "2>") == 0 || strcmp(t, "2>>") == 0) {
 
-      if (i + 1 >= ntokens || is_operator(tokens[i + 1])) {
+      if (i + 1 >= stop || is_operator(tokens[i + 1])) {
         printf("Error output file not specified.\n");
         return -1;
       }
@@ -164,9 +169,15 @@ static int parse_command(char *tokens[], int ntokens, command_t *cmd) {
 
 
 //parses line into cmd, returns 0 or error msg
-int parse_line(char *line, command_t *cmd) {
+//parses line into pl, returns 0 or error msg
+//parses line into pl, returns 0 or error msg
+int parse_line(char *line, pipeline_t *pl) {
   char *tokens[MAX_TOKENS];
   int ntokens;
+  int start = 0;
+  int i;
+
+  pl->ncmds = 0;
 
   ntokens = tokenize(line, tokens);
 
@@ -178,10 +189,44 @@ int parse_line(char *line, command_t *cmd) {
 
   // empty line, nothing to run
   if (ntokens == 0) {
-    init_command(cmd);
-    cmd->argv[0] = NULL;
     return 0;
   }
 
-  return parse_command(tokens, ntokens, cmd);
+  // each | ends a segment, the tokens before it are one command
+  for (i = 0; i <= ntokens; i++) {
+
+    if (i == ntokens || strcmp(tokens[i], "|") == 0) {
+
+      // a segment with no tokens at all means two pipes in a row,
+      // or a pipe at the very start of the line
+      if (i == start) {
+        if (i == ntokens) {
+          printf("Command missing after pipe.\n");
+        } else {
+          printf("Empty command between pipes.\n");
+        }
+        return -1;
+      }
+
+      if (pl->ncmds >= MAX_CMDS) {
+        printf("Too many commands in pipeline.\n");
+        return -1;
+      }
+
+      if (parse_command(tokens, start, i, &pl->cmds[pl->ncmds]) != 0) {
+        return -1;
+      }
+
+      // a segment of only redirection, e.g. "ls | > out.txt"
+      if (pl->cmds[pl->ncmds].argc == 0) {
+        printf("Empty command between pipes.\n");
+        return -1;
+      }
+
+      pl->ncmds++;
+      start = i + 1;
+    }
+  }
+
+  return 0;
 }
