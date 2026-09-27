@@ -168,8 +168,6 @@ static int parse_command(char *tokens[], int start, int stop, command_t *cmd) {
 
 
 
-//parses line into cmd, returns 0 or error msg
-//parses line into pl, returns 0 or error msg
 //parses line into pl, returns 0 or error msg
 int parse_line(char *line, pipeline_t *pl) {
   char *tokens[MAX_TOKENS];
