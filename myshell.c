@@ -15,7 +15,8 @@ will later hand the command to the executor
 
 int main(void) {
   char line[MAX_LINE];
-  command_t cmd;
+  pipeline_t pl;
+  int c;
   int i;
 
 
@@ -41,28 +42,33 @@ int main(void) {
     }
 
     // parse error, message already printed by the parser
-    if (parse_line(line, &cmd) != 0) {
+    if (parse_line(line, &pl) != 0) {
       continue;
     }
 
     // empty line, nothing to run
-    if (cmd.argc == 0) {
+    if (pl.ncmds == 0) {
       continue;
     }
 
-    // Temporary: printing the command to confirm that parsing works
-    printf("Program: [%s]\n", cmd.argv[0]);
-    for (i = 1; i < cmd.argc; i++) {
-      printf("  Arg %d: [%s]\n", i, cmd.argv[i]);
-    }
-    if (cmd.infile != NULL) {
-      printf("  Input: [%s]\n", cmd.infile);
-    }
-    if (cmd.outfile != NULL) {
-      printf("  Output: [%s] append=%d\n", cmd.outfile, cmd.append_out);
-    }
-    if (cmd.errfile != NULL) {
-      printf("  Error: [%s] append=%d\n", cmd.errfile, cmd.append_err);
+    // Temporary: printing the pipeline to confirm that parsing works
+    for (c = 0; c < pl.ncmds; c++) {
+      command_t *cmd = &pl.cmds[c];
+
+      printf("Command %d:\n", c);
+      printf("  Program: [%s]\n", cmd->argv[0]);
+      for (i = 1; i < cmd->argc; i++) {
+        printf("  Arg %d: [%s]\n", i, cmd->argv[i]);
+      }
+      if (cmd->infile != NULL) {
+        printf("  Input: [%s]\n", cmd->infile);
+      }
+      if (cmd->outfile != NULL) {
+        printf("  Output: [%s] append=%d\n", cmd->outfile, cmd->append_out);
+      }
+      if (cmd->errfile != NULL) {
+        printf("  Error: [%s] append=%d\n", cmd->errfile, cmd->append_err);
+      }
     }
   }
 
