@@ -4,7 +4,7 @@ myshell : basic unix shell
 shows prompt
 reads command line from user
 hands the line to the parser
-will later hand the command to the executor
+hands the parsed pipeline to the executor
 */
 
 #include <stdio.h>    // printf(), fgets(), fflush()
@@ -16,8 +16,6 @@ will later hand the command to the executor
 int main(void) {
   char line[MAX_LINE];
   pipeline_t pl;
-  int c;
-  int i;
 
 
   while (1) {
@@ -51,25 +49,7 @@ int main(void) {
       continue;
     }
 
-    // Temporary: printing the pipeline to confirm that parsing works
-    for (c = 0; c < pl.ncmds; c++) {
-      command_t *cmd = &pl.cmds[c];
-
-      printf("Command %d:\n", c);
-      printf("  Program: [%s]\n", cmd->argv[0]);
-      for (i = 1; i < cmd->argc; i++) {
-        printf("  Arg %d: [%s]\n", i, cmd->argv[i]);
-      }
-      if (cmd->infile != NULL) {
-        printf("  Input: [%s]\n", cmd->infile);
-      }
-      if (cmd->outfile != NULL) {
-        printf("  Output: [%s] append=%d\n", cmd->outfile, cmd->append_out);
-      }
-      if (cmd->errfile != NULL) {
-        printf("  Error: [%s] append=%d\n", cmd->errfile, cmd->append_err);
-      }
-    }
+    execute_pipeline(&pl);
   }
 
   return EXIT_SUCCESS;

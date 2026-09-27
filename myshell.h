@@ -1,8 +1,9 @@
 /*
 myshell.h : shared types and limits
 
-defines the command and pipeline structures and parser entry point
-shell loop and the parser can be compiled separately
+defines the command and pipeline structures, the parser entry point
+and the executor entry point
+shell loop, parser and executor can be compiled separately
 */
 
 #ifndef MYSHELL_H
@@ -36,5 +37,9 @@ typedef struct {
 
 //parses line into pl, returns 0 or error msg
 int parse_line(char *line, pipeline_t *pl);
+
+
+//runs an already parsed pipeline, waits for every command in it
+void execute_pipeline(pipeline_t *pl);
 
 #endif
