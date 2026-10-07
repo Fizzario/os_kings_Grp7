@@ -58,15 +58,12 @@ static void close_fds(int fds[MAX_PIPES][2], int n) {
 }
 
 
-// currently prints the pipeline, we need real execution
-/*
-To implement:
-  - fork a child per command
-  - dup2 the redirection files onto stdin, stdout and stderr
-  - pipe() between consecutive commands
-  - execvp the command in the child
-  - parent waits for every child before returning
-*/
+// executes all commands in a pipeline via exec while chaining their inputs and outputs
+// for N correct commands it:
+// - creates N-1 pipes
+// - creates N child processes via fork
+// waits for all of them at the end
+// in case any error happens all traces are cleaned up and function returns
 void execute_pipeline(pipeline_t *pl) {
   int fds[MAX_PIPES][2];
   for (int i = 0; i < pl->ncmds - 1; ++i) {
@@ -84,6 +81,10 @@ void execute_pipeline(pipeline_t *pl) {
     
     if (pid == -1) { // fork fails
       perror("fork");
+      close_fds(fds, pl->ncmds - 1);
+      for (int i = 0; i < c; ++i) {
+        wait(NULL);
+      }
       return;
     }
     else if (pid == 0) { // the child process
@@ -107,6 +108,7 @@ void execute_pipeline(pipeline_t *pl) {
     }
   }
 
+  // close all copies in the parent process so they don't block readers
   close_fds(fds, pl->ncmds - 1);
   for (int i = 0; i < pl->ncmds; ++i)
   {
