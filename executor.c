@@ -8,6 +8,7 @@ executor.c : runs a parsed pipeline
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <errno.h>
 
 #define READ_END 0
 #define WRITE_END 1
@@ -18,7 +19,10 @@ static void redirection(char* infile, char* outfile, char* errfile, int append_o
   if (infile != NULL) {
     int fd = open(infile, O_RDONLY);
     if (fd == -1) {
-      perror("open");
+      if (errno == ENOENT) // catch the missing file error specifically
+        fprintf(stderr, "File not found.\n");
+      else
+        perror("open");
       _exit(1);
     }
     dup2(fd, STDIN_FILENO);
@@ -91,7 +95,14 @@ void execute_pipeline(pipeline_t *pl) {
       // redirection takes precedence over pipes so it's applied last
       redirection(cmd->infile,cmd->outfile,cmd->errfile,cmd->append_out, cmd->append_err);
       execvp(cmd->argv[0], cmd->argv);
-      perror("exec");
+      if (errno == ENOENT) { // catch the missing executable error specifically
+        if (pl->ncmds == 1)
+          fprintf(stderr, "Command not found.\n");
+        else
+          fprintf(stderr, "Command not found in pipe sequence.\n");
+      }
+      else
+        perror("exec");
       _exit(1);
     }
   }
