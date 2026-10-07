@@ -4,6 +4,9 @@ executor.c : runs a parsed pipeline
 
 #include <stdio.h>   // printf()
 #include "myshell.h"
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
 
 
 // currently prints the pipeline, we need real execution
@@ -22,17 +25,33 @@ void execute_pipeline(pipeline_t *pl) {
   for (c = 0; c < pl->ncmds; c++) {
     command_t *cmd = &pl->cmds[c];
 
+    pid_t pid = fork();
+    
+    if (pid == -1) {
+      perror("fork");
+      return;
+    }
+    else if (pid == 0) {
+      execvp(cmd->argv[0], cmd->argv);
+      perror("exec");
+      _exit(1);
+    }
+    else {
+      wait(NULL);
+      return;
+    }
+
     printf("Command %d:\n", c);
     printf("  Program: [%s]\n", cmd->argv[0]);
-
+    
     for (i = 1; i < cmd->argc; i++) {
       printf("  Arg %d: [%s]\n", i, cmd->argv[i]);
     }
-
+    
     if (cmd->infile != NULL) {
       printf("  Input: [%s]\n", cmd->infile);
     }
-
+    
     if (cmd->outfile != NULL) {
       printf("  Output: [%s] append=%d\n", cmd->outfile, cmd->append_out);
     }
