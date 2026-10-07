@@ -9,8 +9,12 @@ executor.c : runs a parsed pipeline
 #include <sys/wait.h>
 #include <sys/types.h>
 
+#define READ_END 0
+#define WRITE_END 1
+#define MAX_PIPES (MAX_CMDS - 1) // -1 because for N chained commands we need N-1 pipes
 
-void redirection(char* infile, char* outfile, char* errfile, int append_out, int append_err) {
+
+static void redirection(char* infile, char* outfile, char* errfile, int append_out, int append_err) {
   if (infile != NULL) {
     int fd = open(infile, O_RDONLY);
     if (fd == -1) {
@@ -41,6 +45,15 @@ void redirection(char* infile, char* outfile, char* errfile, int append_out, int
 }
 
 
+// closes all file descriptors in an array up to N 
+static void close_fds(int fds[MAX_PIPES][2], int n) {
+  for (int i = 0; i < MAX_PIPES && i < n; ++i) {
+    close(fds[i][READ_END]);
+    close(fds[i][WRITE_END]);
+  }
+}
+
+
 // currently prints the pipeline, we need real execution
 /*
 To implement:
@@ -51,10 +64,16 @@ To implement:
   - parent waits for every child before returning
 */
 void execute_pipeline(pipeline_t *pl) {
-  int c;
-  int i;
+  int fds[MAX_PIPES][2];
+  for (int i = 0; i < pl->ncmds - 1; ++i) {
+    if (pipe(fds[i]) == -1) {
+      perror("pipe");
+      close_fds(fds, i);
+      return;
+    }
+  }
 
-  for (c = 0; c < pl->ncmds; c++) {
+  for (int c = 0; c < pl->ncmds; c++) {
     command_t *cmd = &pl->cmds[c];
 
     pid_t pid = fork();
@@ -64,33 +83,22 @@ void execute_pipeline(pipeline_t *pl) {
       return;
     }
     else if (pid == 0) { // the child process
+      if (c > 0) // the first command always reads from stdin
+        dup2(fds[c - 1][READ_END], STDIN_FILENO);
+      if (c < pl->ncmds - 1) // the last command always outputs to stdout
+        dup2(fds[c][WRITE_END], STDOUT_FILENO);
+      close_fds(fds, pl->ncmds - 1);
+      // redirection takes precedence over pipes so it's applied last
       redirection(cmd->infile,cmd->outfile,cmd->errfile,cmd->append_out, cmd->append_err);
       execvp(cmd->argv[0], cmd->argv);
       perror("exec");
       _exit(1);
     }
-    else { // the parent process
-      wait(NULL);
-      return;
-    }
+  }
 
-    printf("Command %d:\n", c);
-    printf("  Program: [%s]\n", cmd->argv[0]);
-    
-    for (i = 1; i < cmd->argc; i++) {
-      printf("  Arg %d: [%s]\n", i, cmd->argv[i]);
-    }
-    
-    if (cmd->infile != NULL) {
-      printf("  Input: [%s]\n", cmd->infile);
-    }
-    
-    if (cmd->outfile != NULL) {
-      printf("  Output: [%s] append=%d\n", cmd->outfile, cmd->append_out);
-    }
-
-    if (cmd->errfile != NULL) {
-      printf("  Error: [%s] append=%d\n", cmd->errfile, cmd->append_err);
-    }
+  close_fds(fds, pl->ncmds - 1);
+  for (int i = 0; i < pl->ncmds; ++i)
+  {
+    wait(NULL);
   }
 }
