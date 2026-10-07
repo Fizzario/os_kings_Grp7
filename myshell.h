@@ -9,17 +9,17 @@ shell loop, parser and executor can be compiled separately
 #ifndef MYSHELL_H
 #define MYSHELL_H
 
-#define MAX_LINE 1024  
-#define MAX_ARGS 64    
-#define MAX_CMDS 16    
+#define MAX_LINE 1024  // longest command line, including the newline
+#define MAX_ARGS 64    // arguments per command, including argv[0]
+#define MAX_CMDS 64    // commands in one pipeline
 
 
 // argv ends in NULL so it can go straight to execvp
 typedef struct {
-  char *argv[MAX_ARGS];  
+  char *argv[MAX_ARGS];
   int argc;              // arg count
 
-  char *infile;          // file after 
+  char *infile;          // file after <
   char *outfile;         // file after > or >>
   int append_out;        // 1 if >> was used, 0 if >
   char *errfile;         // file after 2> or 2>>
@@ -30,7 +30,7 @@ typedef struct {
 // commands joined by |
 typedef struct {
   command_t cmds[MAX_CMDS];
-  int ncmds;             
+  int ncmds;             // number of commands in cmds
 } pipeline_t;
 
 

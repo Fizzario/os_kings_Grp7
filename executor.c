@@ -15,6 +15,10 @@ executor.c : runs a parsed pipeline
 #define MAX_PIPES (MAX_CMDS - 1) // -1 because for N chained commands we need N-1 pipes
 
 
+// points stdin, stdout and stderr at the files the parser recorded
+// runs in the child after the pipe ends are connected, so a file overrides a pipe
+// > and 2> truncate an existing file, >> and 2>> append to it; new files get mode 0644
+// on failure prints the error and ends the child, so the command never runs
 static void redirection(char* infile, char* outfile, char* errfile, int append_out, int append_err) {
   if (infile != NULL) {
     int fd = open(infile, O_RDONLY);
@@ -29,6 +33,7 @@ static void redirection(char* infile, char* outfile, char* errfile, int append_o
     close(fd);
   }
   if (outfile != NULL) {
+    // the append flag picks O_APPEND (for >>) or O_TRUNC (for >)
     int fd = open(outfile, O_WRONLY | O_CREAT | (O_TRUNC * !append_out) | (O_APPEND * append_out), 0644);
     if (fd == -1) {
       perror("open");
@@ -38,6 +43,7 @@ static void redirection(char* infile, char* outfile, char* errfile, int append_o
     close(fd);
   }
   if (errfile != NULL) {
+    // same choice for 2>> and 2>
     int fd = open(errfile, O_WRONLY | O_CREAT | (O_TRUNC * !append_err) | (O_APPEND * append_err), 0644);
     if (fd == -1) {
       perror("open");
@@ -49,7 +55,7 @@ static void redirection(char* infile, char* outfile, char* errfile, int append_o
 }
 
 
-// closes all file descriptors in an array up to N 
+// closes both ends of the first n pipes; n is capped at MAX_PIPES, the size of the array
 static void close_fds(int fds[MAX_PIPES][2], int n) {
   for (int i = 0; i < MAX_PIPES && i < n; ++i) {
     close(fds[i][READ_END]);

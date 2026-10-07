@@ -1,8 +1,15 @@
+/*
+parser.c : turns a command line into a pipeline_t
+
+tokenizes the line, splits the tokens on |, and fills one command_t
+per segment with its arguments and redirection files
+*/
+
 #include <stdio.h>   // fprintf()
 #include <string.h>  // strcmp(), strcpy()
 #include "myshell.h"
 
-#define MAX_TOKENS 128 
+#define MAX_TOKENS 512 // enough for MAX_CMDS commands with arguments and redirections
 
 // operators end a word even with no space around them
 static int tokenize(char *line, char *tokens[]) {
