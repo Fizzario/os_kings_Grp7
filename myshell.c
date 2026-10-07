@@ -55,11 +55,6 @@ int main(void) {
     // fgets keeps newline from user, we find its position to replace with terminator
     line[strcspn(line, "\n")] = '\0';
 
-    // "exit" terminates
-    if (strcmp(line, "exit") == 0) {
-      break;
-    }
-
     // parse error, message already printed by the parser
     if (parse_line(line, &pl) != 0) {
       continue;
@@ -68,6 +63,11 @@ int main(void) {
     // empty line, nothing to run
     if (pl.ncmds == 0) {
       continue;
+    }
+
+    // "exit" terminates; checked after parsing so spaces around it are allowed
+    if (pl.ncmds == 1 && strcmp(pl.cmds[0].argv[0], "exit") == 0) {
+      break;
     }
 
     execute_pipeline(&pl);
