@@ -2,13 +2,13 @@
 executor.c : runs a parsed pipeline
 */
 
-#include <stdio.h>   // printf()
+#include <stdio.h>      // fprintf(), perror()
+#include <unistd.h>     // fork(), execvp(), pipe(), dup2(), close(), _exit(), STDIN/STDOUT/STDERR_FILENO
+#include <fcntl.h>      // open(), O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC, O_APPEND
+#include <sys/wait.h>   // wait()
+#include <sys/types.h>  // pid_t
+#include <errno.h>      // errno, ENOENT
 #include "myshell.h"
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <sys/types.h>
-#include <errno.h>
 
 #define READ_END 0
 #define WRITE_END 1

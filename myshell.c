@@ -48,7 +48,7 @@ int main(void) {
         ;
       }
 
-      printf("Command line too long.\n");
+      fprintf(stderr, "Command line too long.\n");
       continue;
     }
 

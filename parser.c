@@ -1,4 +1,4 @@
-#include <stdio.h>   // printf()
+#include <stdio.h>   // fprintf()
 #include <string.h>  // strcmp(), strcpy()
 #include "myshell.h"
 
@@ -113,7 +113,7 @@ static int parse_command(char *tokens[], int start, int stop, command_t *cmd) {
 
         // missing filename
       if (i + 1 >= stop || is_operator(tokens[i + 1])) {
-        printf("Input file not specified.\n");
+        fprintf(stderr, "Input file not specified.\n");
         return -1;
       }
 
@@ -124,7 +124,7 @@ static int parse_command(char *tokens[], int start, int stop, command_t *cmd) {
     else if (strcmp(t, ">") == 0 || strcmp(t, ">>") == 0) {
 
       if (i + 1 >= stop || is_operator(tokens[i + 1])) {
-        printf("Output file not specified.\n");
+        fprintf(stderr, "Output file not specified.\n");
         return -1;
       }
 
@@ -138,7 +138,7 @@ static int parse_command(char *tokens[], int start, int stop, command_t *cmd) {
     else if (strcmp(t, "2>") == 0 || strcmp(t, "2>>") == 0) {
 
       if (i + 1 >= stop || is_operator(tokens[i + 1])) {
-        printf("Error output file not specified.\n");
+        fprintf(stderr, "Error output file not specified.\n");
         return -1;
       }
 
@@ -151,7 +151,7 @@ static int parse_command(char *tokens[], int start, int stop, command_t *cmd) {
 
       //one slot stays free for the NULL at the end
       if (cmd->argc >= MAX_ARGS - 1) {
-        printf("Too many arguments.\n");
+        fprintf(stderr, "Too many arguments.\n");
         return -1;
       }
 
@@ -181,7 +181,7 @@ int parse_line(char *line, pipeline_t *pl) {
 
 
   if (ntokens < 0) {
-    printf("Too many tokens in command line.\n");
+    fprintf(stderr, "Too many tokens in command line.\n");
     return -1;
   }
 
@@ -199,15 +199,15 @@ int parse_line(char *line, pipeline_t *pl) {
       // or a pipe at the very start of the line
       if (i == start) {
         if (i == ntokens) {
-          printf("Command missing after pipe.\n");
+          fprintf(stderr, "Command missing after pipe.\n");
         } else {
-          printf("Empty command between pipes.\n");
+          fprintf(stderr, "Empty command between pipes.\n");
         }
         return -1;
       }
 
       if (pl->ncmds >= MAX_CMDS) {
-        printf("Too many commands in pipeline.\n");
+        fprintf(stderr, "Too many commands in pipeline.\n");
         return -1;
       }
 
@@ -217,7 +217,7 @@ int parse_line(char *line, pipeline_t *pl) {
 
       // a segment of only redirection, e.g. "ls | > out.txt"
       if (pl->cmds[pl->ncmds].argc == 0) {
-        printf("Empty command between pipes.\n");
+        fprintf(stderr, "Empty command between pipes.\n");
         return -1;
       }
 
