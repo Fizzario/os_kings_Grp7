@@ -21,6 +21,32 @@ sort < in.txt > out.txt
 cat < in.txt | sort | uniq > out.txt
 cat < in.txt | sort 2> err.log | uniq > out.txt
 cat < in.txt | sort 2>> err.log | uniq >> out.txt
+echo "alpha beta"
+echo 'alpha beta'
+echo "one" "two" "three"
+echo a"b"c
+echo ""
+echo "spaced   out"
+echo "|"
+echo "ls | wc"
+echo "a > b"
+echo "2>" "<" ">>"
+echo quoted > "spaced name.txt"
+cat "spaced name.txt"
+echo "unterminated
+echo 'unterminated
+echo "mixed ' inside"
+echo 'mixed " inside'
+echo A > first.txt > second.txt
+cat second.txt
+cat first.txt
+echo B > third.txt >> third.txt
+cat third.txt
+cat < missing.txt < in.txt
+cat 2> caught.txt < missing.txt
+cat caught.txt
+cat > made.txt < missing.txt
+cat made.txt
 cat 
 ls >
 ls >>
