@@ -28,8 +28,26 @@ client.o: client.c myshell.h protocol.h
 protocol.o: protocol.c protocol.h
 	$(CC) $(CFLAGS) -c protocol.c
 
+# the shell's own parser cases, from phase 1
 test: myshell
 	bash tests/run_tests.sh
 
+# the framing on its own: partial reads, large payloads, a peer that dies
+test-protocol: tests/test_protocol
+	./tests/test_protocol
+
+# the client against the stand in server in tests/
+test-client: myclient tests/testserver
+	bash tests/run_client_tests.sh
+
+test-all: test test-protocol test-client
+
+tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
+	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c
+
+# a stand in server, used only by the client tests; not the project's server
+tests/testserver: tests/testserver.c protocol.c protocol.h
+	$(CC) $(CFLAGS) -I. -o tests/testserver tests/testserver.c protocol.c
+
 clean:
-	rm -f myshell myclient *.o
+	rm -f myshell myclient *.o tests/test_protocol tests/testserver

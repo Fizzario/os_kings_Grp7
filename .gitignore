@@ -1,3 +1,12 @@
 # build output
 *.o
 myshell
+myclient
+myserver
+
+# test binaries, built by the test targets
+tests/test_protocol
+tests/testserver
+
+# scratch left by the test runs
+tests/scratch/
