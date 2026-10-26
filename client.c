@@ -53,6 +53,44 @@ static int is_exit(const char *line) {
 
 
 /*
+reads one whole response and prints it
+
+a response is zero or more messages carrying output followed by an empty
+message, so output of any size arrives in pieces and the empty one says
+where it ends. each piece is printed as it arrives rather than collected
+first, so the output of a long command appears while it is still coming
+
+returns  1 when the whole response was printed
+         0 when the server closed the connection
+        -1 on a failure
+*/
+static int read_response(int sock) {
+  size_t len;
+
+  while (1) {
+    switch (recv_msg(sock, response, sizeof response, &len)) {
+
+      case 1:
+        // the empty message ends the response
+        if (len == 0) return 1;
+
+        // the output already carries its own newlines, so it is written
+        // exactly as it came rather than printed as a line
+        fwrite(response, 1, len, stdout);
+        fflush(stdout);
+        break;
+
+      case 0:
+        return 0;
+
+      default:
+        return -1;
+    }
+  }
+}
+
+
+/*
 opens a TCP connection to the server
 returns the socket, or -1 after printing why it failed
 */
@@ -96,7 +134,6 @@ static int connect_to_server(void) {
 
 int main(void) {
   char line[MAX_LINE];
-  size_t len;
   int sock;
   int status = EXIT_SUCCESS;
 
@@ -171,16 +208,10 @@ int main(void) {
       break;
     }
 
-    switch (recv_msg(sock, response, sizeof response, &len)) {
+    switch (read_response(sock)) {
 
       case 1:
-        // the server sends the whole output of the command as one message,
-        // already containing its own newlines, so it is written as is
-        if (len > 0) {
-          fwrite(response, 1, len, stdout);
-          fflush(stdout);
-        }
-        break;
+        break;   // whole response printed, prompt again
 
       case 0:
         // the server closed between messages, which is an orderly shutdown
