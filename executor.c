@@ -18,10 +18,35 @@ executor.c : runs a parsed pipeline
 // points stdin, stdout and stderr at the files the parser recorded
 // runs in the child after the pipe ends are connected, so a file overrides a pipe
 // > and 2> truncate an existing file, >> and 2>> append to it; new files get mode 0644
+//
+// the list is walked in the order the redirections were written, exactly as a
+// real shell does, and that order is what makes the compound cases behave:
+// - "> a > b" opens a, then opens b over it, so a is still created and left empty
+// - "2> err < missing" has err already on stderr when the input open fails, so
+//   the message lands in the file rather than on the terminal
+// - the first failure stops the walk, so nothing after it is opened
+//
 // on failure prints the error and ends the child, so the command never runs
-static void redirection(char* infile, char* outfile, char* errfile, int append_out, int append_err) {
-  if (infile != NULL) {
-    int fd = open(infile, O_RDONLY);
+static void redirection(command_t *cmd) {
+  for (int i = 0; i < cmd->nredirects; ++i) {
+    redirect_t *r = &cmd->redirects[i];
+    int fd;
+    int stream;
+
+    if (r->type == RED_IN) {
+      fd = open(r->file, O_RDONLY);
+      stream = STDIN_FILENO;
+    }
+    else {
+      // the append forms keep what is already in the file, the others truncate
+      int append = (r->type == RED_APPEND || r->type == RED_ERRAPPEND);
+      fd = open(r->file, O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC), 0644);
+
+      // 2> and 2>> move stderr, > and >> move stdout
+      stream = (r->type == RED_ERR || r->type == RED_ERRAPPEND)
+                 ? STDERR_FILENO : STDOUT_FILENO;
+    }
+
     if (fd == -1) {
       if (errno == ENOENT) // catch the missing file error specifically
         fprintf(stderr, "File not found.\n");
@@ -29,27 +54,8 @@ static void redirection(char* infile, char* outfile, char* errfile, int append_o
         perror("open");
       _exit(1);
     }
-    dup2(fd, STDIN_FILENO);
-    close(fd);
-  }
-  if (outfile != NULL) {
-    // the append flag picks O_APPEND (for >>) or O_TRUNC (for >)
-    int fd = open(outfile, O_WRONLY | O_CREAT | (O_TRUNC * !append_out) | (O_APPEND * append_out), 0644);
-    if (fd == -1) {
-      perror("open");
-      _exit(1);
-    }
-    dup2(fd, STDOUT_FILENO);
-    close(fd);
-  }
-  if (errfile != NULL) {
-    // same choice for 2>> and 2>
-    int fd = open(errfile, O_WRONLY | O_CREAT | (O_TRUNC * !append_err) | (O_APPEND * append_err), 0644);
-    if (fd == -1) {
-      perror("open");
-      _exit(1);
-    }
-    dup2(fd, STDERR_FILENO);
+
+    dup2(fd, stream);
     close(fd);
   }
 }
@@ -100,7 +106,7 @@ void execute_pipeline(pipeline_t *pl) {
         dup2(fds[c][WRITE_END], STDOUT_FILENO);
       close_fds(fds, pl->ncmds - 1);
       // redirection takes precedence over pipes so it's applied last
-      redirection(cmd->infile,cmd->outfile,cmd->errfile,cmd->append_out, cmd->append_err);
+      redirection(cmd);
       execvp(cmd->argv[0], cmd->argv);
       if (errno == ENOENT) { // catch the missing executable error specifically
         if (pl->ncmds == 1)
