@@ -61,4 +61,9 @@ int parse_line(char *line, pipeline_t *pl);
 //runs an already parsed pipeline, waits for every command in it
 void execute_pipeline(pipeline_t *pl);
 
+
+// 1 makes the missing command error include the command's name
+// the server sets it, the local shell keeps the phase 1 message
+extern int report_command_name;
+
 #endif

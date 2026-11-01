@@ -8,7 +8,7 @@ stops when the client sends exit or disconnects
 
 #include <stdio.h>      // printf(), perror(), fflush()
 #include <stdlib.h>     // EXIT_SUCCESS, EXIT_FAILURE
-#include <string.h>     // memset(), strcmp(), strlen()
+#include <string.h>     // memset(), strcmp(), strlen(), strncmp()
 #include <signal.h>     // signal(), SIGPIPE, SIG_IGN
 #include <unistd.h>     // close(), fork(), pipe(), dup2(), read(), _exit()
 #include <sys/wait.h>   // waitpid(), WIFEXITED, WEXITSTATUS
@@ -78,18 +78,41 @@ static int send_failure(int conn_fd) {
 }
 
 
-// runs in the child: points stdout and stderr at the pipe, then parses and
-// executes the line the same way myshell does, so errors reach the client too
+// prints an error the way the spec's server output shows it
+// the log line quotes the name of a missing command, the text sent doesn't
+static void log_error(const char *text, size_t len) {
+  static const char prefix[] = "Command not found: ";
+  size_t plen = sizeof prefix - 1;
+
+  // the newline stays in what goes to the client but not inside the quotes
+  while (len > 0 && text[len - 1] == '\n')
+    len--;
+
+  if (len > plen && strncmp(text, prefix, plen) == 0)
+    printf("[ERROR] Command not found: \"%.*s\"\n", (int) (len - plen), text + plen);
+  else
+    printf("[ERROR] %.*s\n", (int) len, text);
+
+  printf("[OUTPUT] Sending error message to client: \"%.*s\"\n", (int) len, text);
+}
+
+
+// runs in the child: points stdout and stderr at their pipes, then parses and
+// executes the line the same way myshell does
 // the shell code stays unchanged since it only writes to stdout and stderr
-static void run_child(char *line, int listen_fd, int conn_fd, int wfd) {
+static void run_child(char *line, int listen_fd, int conn_fd, int ofd, int efd) {
   pipeline_t pl;
 
   close(listen_fd);
   close(conn_fd);
 
-  dup2(wfd, STDOUT_FILENO);
-  dup2(wfd, STDERR_FILENO);
-  close(wfd);
+  dup2(ofd, STDOUT_FILENO);
+  dup2(efd, STDERR_FILENO);
+  close(ofd);
+  close(efd);
+
+  // the spec's client shows the name of the missing command, myshell doesn't
+  report_command_name = 1;
 
   if (parse_line(line, &pl) != 0 || pl.ncmds == 0)
     _exit(0);
@@ -103,19 +126,52 @@ static void run_child(char *line, int listen_fd, int conn_fd, int wfd) {
 }
 
 
+// reads one pipe until every writer has closed it, logging and sending each piece
+// returns 0, or -1 if the client is gone
+static int forward_output(int fd, int conn_fd, int is_err, int *shown_any) {
+  int shown_output = 0;
+  ssize_t n;
+
+  while ((n = read(fd, out, sizeof out)) > 0) {
+    if (is_err) {
+      log_error(out, (size_t) n);
+    }
+    else {
+      if (!shown_output) {
+        printf("[OUTPUT] Sending output to client:\n");
+        shown_output = 1;
+      }
+      fwrite(out, 1, (size_t) n, stdout);
+      fflush(stdout);
+    }
+    *shown_any = 1;
+
+    if (send_msg(conn_fd, out, (size_t) n) != 0)
+      return -1;
+  }
+
+  return 0;
+}
+
+
 // runs one command and sends its output to the client
 // returns 1 to keep going, 0 if the line was an exit command, -1 if the
 // client is gone
 static int run_command(char *line, int listen_fd, int conn_fd) {
-  int fds[2];
+  int ofds[2], efds[2];
   int status = 0;
-  int shown = 0;
-  int lost = 0;
-  ssize_t n;
+  int shown_any = 0;
+  int lost;
   pid_t pid;
 
-  if (pipe(fds) == -1) {
+  if (pipe(ofds) == -1) {
     perror("pipe");
+    return send_failure(conn_fd) == 0 ? 1 : -1;
+  }
+  if (pipe(efds) == -1) {
+    perror("pipe");
+    close(ofds[READ_END]);
+    close(ofds[WRITE_END]);
     return send_failure(conn_fd) == 0 ? 1 : -1;
   }
 
@@ -126,35 +182,33 @@ static int run_command(char *line, int listen_fd, int conn_fd) {
 
   if (pid == -1) {
     perror("fork");
-    close(fds[READ_END]);
-    close(fds[WRITE_END]);
+    close(ofds[READ_END]);
+    close(ofds[WRITE_END]);
+    close(efds[READ_END]);
+    close(efds[WRITE_END]);
     return send_failure(conn_fd) == 0 ? 1 : -1;
   }
   else if (pid == 0) { // the child process
-    close(fds[READ_END]);
-    run_child(line, listen_fd, conn_fd, fds[WRITE_END]);
+    close(ofds[READ_END]);
+    close(efds[READ_END]);
+    run_child(line, listen_fd, conn_fd, ofds[WRITE_END], efds[WRITE_END]);
   }
 
-  // our copy has to go or read below never sees the end of the output
-  close(fds[WRITE_END]);
+  // our copies have to go or read below never sees the end of the output
+  close(ofds[WRITE_END]);
+  close(efds[WRITE_END]);
 
   // read while the command runs, a pipe only holds about 64 KB so waiting
   // for the command first would deadlock on large output
-  while ((n = read(fds[READ_END], out, sizeof out)) > 0) {
-    if (!shown) {
-      printf("[OUTPUT] Sending output to client:\n");
-      shown = 1;
-    }
-    fwrite(out, 1, (size_t) n, stdout);
-    fflush(stdout);
+  // stdout goes first and then stderr, so errors come after normal output
+  lost = forward_output(ofds[READ_END], conn_fd, 0, &shown_any);
+  if (lost == 0)
+    lost = forward_output(efds[READ_END], conn_fd, 1, &shown_any);
 
-    if (send_msg(conn_fd, out, (size_t) n) != 0) {
-      lost = 1;
-      break;
-    }
-  }
+  // closed before the wait, so a command still writing gets stopped by SIGPIPE
+  close(ofds[READ_END]);
+  close(efds[READ_END]);
 
-  close(fds[READ_END]);
   waitpid(pid, &status, 0);
 
   if (lost)
@@ -163,7 +217,7 @@ static int run_command(char *line, int listen_fd, int conn_fd) {
   if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_REQUESTED)
     return 0;
 
-  if (!shown)
+  if (!shown_any)
     printf("[OUTPUT] Sending no output to client.\n");
   printf("\n");
 
