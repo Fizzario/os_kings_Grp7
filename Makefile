@@ -47,7 +47,11 @@ test-protocol: tests/test_protocol
 test-client: myclient tests/testserver
 	bash tests/run_client_tests.sh
 
-test-all: test test-protocol test-client
+# the real client against the real server
+test-server: myshell myclient myserver
+	bash tests/run_server_tests.sh
+
+test-all: test test-protocol test-client test-server
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c
