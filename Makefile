@@ -2,8 +2,8 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g
 
 # myshell is the local shell from phase 1 and still runs on its own
-# myclient is the remote front end; myserver is added with the server
-all: myshell myclient
+# myclient and myserver are the two ends of the remote shell
+all: myshell myclient myserver
 
 myshell: myshell.o parser.o executor.o
 	$(CC) $(CFLAGS) -o myshell myshell.o parser.o executor.o
@@ -28,6 +28,12 @@ client.o: client.c myshell.h protocol.h
 protocol.o: protocol.c protocol.h
 	$(CC) $(CFLAGS) -c protocol.c
 
+myserver: server.o protocol.o
+	$(CC) $(CFLAGS) -o myserver server.o protocol.o
+
+server.o: server.c protocol.h
+	$(CC) $(CFLAGS) -c server.c
+
 # the shell's own parser cases, from phase 1
 test: myshell
 	bash tests/run_tests.sh
@@ -50,4 +56,4 @@ tests/testserver: tests/testserver.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/testserver tests/testserver.c protocol.c
 
 clean:
-	rm -f myshell myclient *.o tests/test_protocol tests/testserver
+	rm -f myshell myclient myserver *.o tests/test_protocol tests/testserver
