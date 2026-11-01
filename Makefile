@@ -28,10 +28,11 @@ client.o: client.c myshell.h protocol.h
 protocol.o: protocol.c protocol.h
 	$(CC) $(CFLAGS) -c protocol.c
 
-myserver: server.o protocol.o
-	$(CC) $(CFLAGS) -o myserver server.o protocol.o
+# the server runs the same parser and executor as the local shell
+myserver: server.o parser.o executor.o protocol.o
+	$(CC) $(CFLAGS) -o myserver server.o parser.o executor.o protocol.o
 
-server.o: server.c protocol.h
+server.o: server.c myshell.h protocol.h
 	$(CC) $(CFLAGS) -c server.c
 
 # the shell's own parser cases, from phase 1

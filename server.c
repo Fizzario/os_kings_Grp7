@@ -1,19 +1,32 @@
 /*
 server.c : the remote side of the shell
 
-listens on a TCP port, accepts one client and reads its commands
+listens on a TCP port, accepts one client and runs its commands with the
+parser and executor from phase 1, sending the output back over the socket
 stops when the client sends exit or disconnects
 */
 
 #include <stdio.h>      // printf(), perror(), fflush()
 #include <stdlib.h>     // EXIT_SUCCESS, EXIT_FAILURE
-#include <string.h>     // memset(), strcmp()
-#include <unistd.h>     // close()
+#include <string.h>     // memset(), strcmp(), strlen()
+#include <signal.h>     // signal(), SIGPIPE, SIG_IGN
+#include <unistd.h>     // close(), fork(), pipe(), dup2(), read(), _exit()
+#include <sys/wait.h>   // waitpid(), WIFEXITED, WEXITSTATUS
 #include <arpa/inet.h>  // socket(), bind(), listen(), accept(), htons(), htonl()
+#include "myshell.h"    // pipeline_t, parse_line(), execute_pipeline()
 #include "protocol.h"   // send_msg(), recv_msg(), SERVER_PORT, MAX_MSG
+
+#define READ_END 0
+#define WRITE_END 1
+
+// exit code the child uses to say the line was an exit command
+#define EXIT_REQUESTED 42
 
 // one byte larger than the biggest message so recv_msg can terminate it
 static char msg[MAX_MSG + 1];
+
+// one read of command output, at most one message
+static char out[MAX_MSG];
 
 
 // creates the socket, binds it to SERVER_PORT and starts listening
@@ -53,10 +66,119 @@ static int start_listening(void) {
 }
 
 
+// tells the client the command could not be started
+// returns 0, or -1 if the client is gone
+static int send_failure(int conn_fd) {
+  const char *text = "Server could not run the command.\n";
+
+  printf("[ERROR] Server could not run the command.\n");
+  if (send_msg(conn_fd, text, strlen(text)) != 0)
+    return -1;
+  return send_msg(conn_fd, "", 0);
+}
+
+
+// runs in the child: points stdout and stderr at the pipe, then parses and
+// executes the line the same way myshell does, so errors reach the client too
+// the shell code stays unchanged since it only writes to stdout and stderr
+static void run_child(char *line, int listen_fd, int conn_fd, int wfd) {
+  pipeline_t pl;
+
+  close(listen_fd);
+  close(conn_fd);
+
+  dup2(wfd, STDOUT_FILENO);
+  dup2(wfd, STDERR_FILENO);
+  close(wfd);
+
+  if (parse_line(line, &pl) != 0 || pl.ncmds == 0)
+    _exit(0);
+
+  // same check as myshell.c, so "exit now" or a quoted exit also stops it
+  if (pl.ncmds == 1 && strcmp(pl.cmds[0].argv[0], "exit") == 0)
+    _exit(EXIT_REQUESTED);
+
+  execute_pipeline(&pl);
+  _exit(0);
+}
+
+
+// runs one command and sends its output to the client
+// returns 1 to keep going, 0 if the line was an exit command, -1 if the
+// client is gone
+static int run_command(char *line, int listen_fd, int conn_fd) {
+  int fds[2];
+  int status = 0;
+  int shown = 0;
+  int lost = 0;
+  ssize_t n;
+  pid_t pid;
+
+  if (pipe(fds) == -1) {
+    perror("pipe");
+    return send_failure(conn_fd) == 0 ? 1 : -1;
+  }
+
+  // anything still buffered would be copied into the child
+  fflush(stdout);
+
+  pid = fork();
+
+  if (pid == -1) {
+    perror("fork");
+    close(fds[READ_END]);
+    close(fds[WRITE_END]);
+    return send_failure(conn_fd) == 0 ? 1 : -1;
+  }
+  else if (pid == 0) { // the child process
+    close(fds[READ_END]);
+    run_child(line, listen_fd, conn_fd, fds[WRITE_END]);
+  }
+
+  // our copy has to go or read below never sees the end of the output
+  close(fds[WRITE_END]);
+
+  // read while the command runs, a pipe only holds about 64 KB so waiting
+  // for the command first would deadlock on large output
+  while ((n = read(fds[READ_END], out, sizeof out)) > 0) {
+    if (!shown) {
+      printf("[OUTPUT] Sending output to client:\n");
+      shown = 1;
+    }
+    fwrite(out, 1, (size_t) n, stdout);
+    fflush(stdout);
+
+    if (send_msg(conn_fd, out, (size_t) n) != 0) {
+      lost = 1;
+      break;
+    }
+  }
+
+  close(fds[READ_END]);
+  waitpid(pid, &status, 0);
+
+  if (lost)
+    return -1;
+
+  if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_REQUESTED)
+    return 0;
+
+  if (!shown)
+    printf("[OUTPUT] Sending no output to client.\n");
+  printf("\n");
+
+  // the empty message ends the response
+  return send_msg(conn_fd, "", 0) == 0 ? 1 : -1;
+}
+
+
 int main(void) {
   int listen_fd, conn_fd;
   int status = EXIT_SUCCESS;
   size_t len;
+
+  // a client that disappears should make send fail, not kill the server
+  signal(SIGPIPE, SIG_IGN);
 
   listen_fd = start_listening();
   if (listen_fd == -1)
@@ -94,8 +216,15 @@ int main(void) {
       break;
     }
 
-    // nothing runs yet, the empty message just lets the client prompt again
-    if (send_msg(conn_fd, "", 0) != 0) {
+    printf("[EXECUTING] Executing command: \"%s\"\n", msg);
+
+    r = run_command(msg, listen_fd, conn_fd);
+
+    if (r == 0) {
+      printf("[INFO] Client sent exit, shutting down.\n");
+      break;
+    }
+    if (r < 0) {
       printf("[INFO] Client disconnected, shutting down.\n");
       break;
     }
