@@ -9,7 +9,7 @@ stops when the client sends exit or disconnects
 #include <stdio.h>      // printf(), perror(), fflush()
 #include <stdlib.h>     // EXIT_SUCCESS, EXIT_FAILURE
 #include <string.h>     // memset(), strcmp(), strlen(), strncmp()
-#include <signal.h>     // signal(), SIGPIPE, SIG_IGN
+#include <signal.h>     // signal(), SIGPIPE, SIG_IGN, SIG_DFL
 #include <unistd.h>     // close(), fork(), pipe(), dup2(), read(), _exit()
 #include <sys/wait.h>   // waitpid(), WIFEXITED, WEXITSTATUS
 #include <arpa/inet.h>  // socket(), bind(), listen(), accept(), htons(), htonl()
@@ -102,6 +102,10 @@ static void log_error(const char *text, size_t len) {
 // the shell code stays unchanged since it only writes to stdout and stderr
 static void run_child(char *line, int listen_fd, int conn_fd, int ofd, int efd) {
   pipeline_t pl;
+
+  // the server ignores SIGPIPE and exec keeps that, without this yes | head
+  // has yes fail with a write error instead of just being stopped
+  signal(SIGPIPE, SIG_DFL);
 
   close(listen_fd);
   close(conn_fd);
