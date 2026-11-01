@@ -10,3 +10,8 @@ tests/testserver
 
 # scratch left by the test runs
 tests/scratch/
+tests/.client_out
+tests/.server_log
+
+# debug symbols from building on mac
+*.dSYM/
