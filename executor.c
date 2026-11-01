@@ -14,6 +14,8 @@ executor.c : runs a parsed pipeline
 #define WRITE_END 1
 #define MAX_PIPES (MAX_CMDS - 1) // -1 because for N chained commands we need N-1 pipes
 
+int report_command_name = 0;
+
 
 // points stdin, stdout and stderr at the files the parser recorded
 // runs in the child after the pipe ends are connected, so a file overrides a pipe
@@ -109,7 +111,9 @@ void execute_pipeline(pipeline_t *pl) {
       redirection(cmd);
       execvp(cmd->argv[0], cmd->argv);
       if (errno == ENOENT) { // catch the missing executable error specifically
-        if (pl->ncmds == 1)
+        if (pl->ncmds == 1 && report_command_name)
+          fprintf(stderr, "Command not found: %s\n", cmd->argv[0]);
+        else if (pl->ncmds == 1)
           fprintf(stderr, "Command not found.\n");
         else
           fprintf(stderr, "Command not found in pipe sequence.\n");
