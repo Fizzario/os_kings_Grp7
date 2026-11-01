@@ -1,15 +1,19 @@
 /*
 server.c : the remote side of the shell
 
-listens on a TCP port and waits for one client
+listens on a TCP port, accepts one client and reads its commands
+stops when the client sends exit or disconnects
 */
 
 #include <stdio.h>      // printf(), perror(), fflush()
 #include <stdlib.h>     // EXIT_SUCCESS, EXIT_FAILURE
-#include <string.h>     // memset()
+#include <string.h>     // memset(), strcmp()
 #include <unistd.h>     // close()
 #include <arpa/inet.h>  // socket(), bind(), listen(), accept(), htons(), htonl()
-#include "protocol.h"   // SERVER_PORT
+#include "protocol.h"   // send_msg(), recv_msg(), SERVER_PORT, MAX_MSG
+
+// one byte larger than the biggest message so recv_msg can terminate it
+static char msg[MAX_MSG + 1];
 
 
 // creates the socket, binds it to SERVER_PORT and starts listening
@@ -51,6 +55,8 @@ static int start_listening(void) {
 
 int main(void) {
   int listen_fd, conn_fd;
+  int status = EXIT_SUCCESS;
+  size_t len;
 
   listen_fd = start_listening();
   if (listen_fd == -1)
@@ -68,7 +74,34 @@ int main(void) {
 
   printf("[INFO] Client connected.\n");
 
+  while (1) {
+    int r = recv_msg(conn_fd, msg, sizeof msg, &len);
+
+    if (r == 0) {
+      printf("[INFO] Client disconnected, shutting down.\n");
+      break;
+    }
+    if (r < 0) {
+      printf("[ERROR] Receive failed, shutting down.\n");
+      status = EXIT_FAILURE;
+      break;
+    }
+
+    printf("[RECEIVED] Received command: \"%s\" from client.\n", msg);
+
+    if (strcmp(msg, "exit") == 0) {
+      printf("[INFO] Client sent exit, shutting down.\n");
+      break;
+    }
+
+    // nothing runs yet, the empty message just lets the client prompt again
+    if (send_msg(conn_fd, "", 0) != 0) {
+      printf("[INFO] Client disconnected, shutting down.\n");
+      break;
+    }
+  }
+
   close(conn_fd);
   close(listen_fd);
-  return EXIT_SUCCESS;
+  return status;
 }
