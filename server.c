@@ -9,6 +9,7 @@ stops when the client sends exit or disconnects
 #include <stdio.h>      // printf(), perror(), fflush()
 #include <stdlib.h>     // EXIT_SUCCESS, EXIT_FAILURE
 #include <string.h>     // memset(), strcmp(), strlen(), strncmp()
+#include <fcntl.h>      // open(), O_RDONLY
 #include <signal.h>     // signal(), SIGPIPE, SIG_IGN, SIG_DFL
 #include <unistd.h>     // close(), fork(), pipe(), dup2(), read(), _exit()
 #include <sys/wait.h>   // waitpid(), WIFEXITED, WEXITSTATUS
@@ -102,6 +103,7 @@ static void log_error(const char *text, size_t len) {
 // the shell code stays unchanged since it only writes to stdout and stderr
 static void run_child(char *line, int listen_fd, int conn_fd, int ofd, int efd) {
   pipeline_t pl;
+  int devnull;
 
   // the server ignores SIGPIPE and exec keeps that, without this yes | head
   // has yes fail with a write error instead of just being stopped
@@ -109,6 +111,14 @@ static void run_child(char *line, int listen_fd, int conn_fd, int ofd, int efd) 
 
   close(listen_fd);
   close(conn_fd);
+
+  // the client can't send input to a command, so anything reading stdin
+  // (cat with no file, sort, wc) would wait forever on the server's terminal
+  devnull = open("/dev/null", O_RDONLY);
+  if (devnull != -1) {
+    dup2(devnull, STDIN_FILENO);
+    close(devnull);
+  }
 
   dup2(ofd, STDOUT_FILENO);
   dup2(efd, STDERR_FILENO);
