@@ -14,11 +14,13 @@ stops when the client sends exit or disconnects
 #include <unistd.h>     // close(), fork(), pipe(), dup2(), read(), _exit()
 #include <sys/wait.h>   // waitpid(), WIFEXITED, WEXITSTATUS
 #include <arpa/inet.h>  // socket(), bind(), listen(), accept(), htons(), htonl()
-#include "myshell.h"    // pipeline_t, parse_line(), execute_pipeline()
+#include "myshell.h"    // pipeline_t, parse_line(), execute_pipeline(), MAX_LINE
 #include "protocol.h"   // send_msg(), recv_msg(), SERVER_PORT, MAX_MSG
 
 #define READ_END 0
 #define WRITE_END 1
+
+#define RUN_FAILED "Server could not run the command.\n"
 
 // exit code the child uses to say the line was an exit command
 #define EXIT_REQUESTED 42
@@ -67,18 +69,6 @@ static int start_listening(void) {
 }
 
 
-// tells the client the command could not be started
-// returns 0, or -1 if the client is gone
-static int send_failure(int conn_fd) {
-  const char *text = "Server could not run the command.\n";
-
-  printf("[ERROR] Server could not run the command.\n");
-  if (send_msg(conn_fd, text, strlen(text)) != 0)
-    return -1;
-  return send_msg(conn_fd, "", 0);
-}
-
-
 // prints an error the way the spec's server output shows it
 // the log line quotes the name of a missing command, the text sent doesn't
 static void log_error(const char *text, size_t len) {
@@ -95,6 +85,18 @@ static void log_error(const char *text, size_t len) {
     printf("[ERROR] %.*s\n", (int) len, text);
 
   printf("[OUTPUT] Sending error message to client: \"%.*s\"\n", (int) len, text);
+}
+
+
+// sends an error of the server's own, as a whole response
+// returns 0, or -1 if the client is gone
+static int send_error(int conn_fd, const char *text) {
+  log_error(text, strlen(text));
+  printf("\n");
+
+  if (send_msg(conn_fd, text, strlen(text)) != 0)
+    return -1;
+  return send_msg(conn_fd, "", 0);
 }
 
 
@@ -180,13 +182,13 @@ static int run_command(char *line, int listen_fd, int conn_fd) {
 
   if (pipe(ofds) == -1) {
     perror("pipe");
-    return send_failure(conn_fd) == 0 ? 1 : -1;
+    return send_error(conn_fd, RUN_FAILED) == 0 ? 1 : -1;
   }
   if (pipe(efds) == -1) {
     perror("pipe");
     close(ofds[READ_END]);
     close(ofds[WRITE_END]);
-    return send_failure(conn_fd) == 0 ? 1 : -1;
+    return send_error(conn_fd, RUN_FAILED) == 0 ? 1 : -1;
   }
 
   // anything still buffered would be copied into the child
@@ -200,7 +202,7 @@ static int run_command(char *line, int listen_fd, int conn_fd) {
     close(ofds[WRITE_END]);
     close(efds[READ_END]);
     close(efds[WRITE_END]);
-    return send_failure(conn_fd) == 0 ? 1 : -1;
+    return send_error(conn_fd, RUN_FAILED) == 0 ? 1 : -1;
   }
   else if (pid == 0) { // the child process
     close(ofds[READ_END]);
@@ -275,6 +277,16 @@ int main(void) {
       printf("[ERROR] Receive failed, shutting down.\n");
       status = EXIT_FAILURE;
       break;
+    }
+
+    // myclient already refuses these, but the parser's buffers are MAX_LINE
+    // so the server can't count on the other end being myclient
+    if (len >= MAX_LINE) {
+      if (send_error(conn_fd, "Command line too long.\n") != 0) {
+        printf("[INFO] Client disconnected, shutting down.\n");
+        break;
+      }
+      continue;
     }
 
     printf("[RECEIVED] Received command: \"%s\" from client.\n", msg);
