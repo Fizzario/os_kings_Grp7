@@ -15,3 +15,5 @@ tests/.server_log
 
 # debug symbols from building on mac
 *.dSYM/
+tests/test_clientlog
+tests/.concurrent/
