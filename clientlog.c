@@ -173,6 +173,11 @@ void log_client_disconnected(const client_t *c) {
 }
 
 
+void log_blank(void) {
+  emit("\n", 1);
+}
+
+
 void log_info(const client_t *c, const char *fmt, ...) {
   char text[ENTRY_MAX];
   va_list ap;

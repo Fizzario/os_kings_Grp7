@@ -109,6 +109,15 @@ void log_disconnect_requested(const client_t *c);
 void log_client_disconnected(const client_t *c);
 
 /*
+A blank line, which the figure uses to separate one command's entries from
+the next. It goes through the log like any other entry rather than being a
+bare printf, because from a thread a bare printf is the very interleaving
+this unit exists to prevent.
+*/
+void log_blank(void);
+
+
+/*
 Any other [INFO] line, for cases the figure does not show: a thread that
 could not be started, a receive that failed. Printed with the client's name
 in front when c is given, without it when c is NULL.
