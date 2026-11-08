@@ -1,24 +1,8 @@
 #!/bin/bash
 #
 # run_concurrent_tests.sh : several clients against one server at once
-#
-# This is the suite for what phase 3 is actually for. The other suites run
-# one client at a time and say nothing about what happens when two are
-# connected together, which is where the interesting failures live: shared
-# buffers, a log cut in half, one client's output arriving at another, one
+# shared buffers, a log cut in half, one client's output arriving at another, one
 # client leaving and taking the others with it.
-#
-# Two kinds of check are used.
-#
-#   check    a property that must hold however the server is built, whether
-#            it serves clients one after another or all at once. A failure
-#            here is a real failure.
-#
-#   pending  a property that can only hold once each client is served on
-#            its own thread. Against a server that serves clients in turn
-#            these report PENDING rather than FAIL, and turn into PASS by
-#            themselves once the threading is in. They are the acceptance
-#            tests for that work, written before it.
 #
 # The suite's exit status ignores pending checks, so the repository is not
 # left with a red test for work that has not been done yet. A pending check

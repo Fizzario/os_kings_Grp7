@@ -1,5 +1,4 @@
 /*
-server.c : the remote side of the shell
 
 Listens on a TCP port and serves clients, running their commands with the
 parser and executor from phase 1 and sending the output back over the
@@ -13,17 +12,6 @@ For each command the flow is:
   the child parses and executes the line, exactly as myshell would
   the server reads stdout then stderr, logs them and passes them to the client
   an empty message tells the client the response is finished
-
-The shell code runs in a child so that it can't touch the server's own
-stdout, which is the log. Redirecting stdout in the server and putting it
-back after each command would mean a mistake there breaks the log for the
-whole session.
-
-Everything one connection needs lives in a session_t, allocated when the
-client is accepted and freed when it leaves. Nothing about a client is kept
-in a file-scope variable: serve_client() reads and writes only through the
-session it is given, so running two of them at once is a matter of starting
-them, not of untangling shared state first.
 */
 
 #include <stdio.h>      // perror()
@@ -45,33 +33,16 @@ them, not of untangling shared state first.
 
 /*
 How many connections the kernel may hold while the server is busy with
-another. One was enough while the server served a single client and then
-stopped; now that it keeps going, a client arriving while another is being
-accepted has to wait somewhere rather than be refused.
+another. 
 */
 #define BACKLOG 16
 
 // exit code the child uses to say the line was an exit command
-// execute_pipeline returns nothing and the child always exits 0 otherwise, so
-// a command's own exit status can't be confused with this
 #define EXIT_REQUESTED 42
 
 
 /*
-Everything one connected client needs.
-
-The two buffers used to be file-scope, which was fine while the server
-served one client at a time in one process. Serving clients concurrently
-makes that a bug rather than a shortcut: two sessions would be reading
-commands into the same msg and the same command's output into the same out,
-and each would see the other's bytes. They are here instead, so every
-session has its own and no session can reach another's.
-
-They are large enough that one session is some 128 KB, which is why a
-session is allocated rather than being a local: a local of that size is a
-surprise on any stack, and allocating it is also the shape a thread needs,
-since the thread has to be handed something that outlives the call that
-started it.
+The two buffers serving clients concurrently
 */
 typedef struct {
   client_t client;            // who this is, for the log
@@ -81,7 +52,6 @@ typedef struct {
 
 
 // creates the socket, binds it to SERVER_PORT and starts listening
-// returns the listening socket, or -1 after printing what failed
 static int start_listening(void) {
   int fd, yes = 1;
   struct sockaddr_in addr;
@@ -119,9 +89,7 @@ static int start_listening(void) {
 }
 
 
-// sends an error of the server's own, as a whole response: the text and then
-// the empty message, since the client is waiting for that to prompt again
-// returns 0, or -1 if the client is gone
+// sends an error of the server's own, as a whole response
 static int send_error(session_t *s, const char *text) {
   log_error(&s->client, text, strlen(text));
   log_blank();
@@ -134,31 +102,17 @@ static int send_error(session_t *s, const char *text) {
 
 /*
 Runs in the child: points stdout and stderr at their pipes, then parses and
-executes the line the same way myshell does. The shell code stays unchanged
-since it only writes to stdout and stderr. Never returns; it ends with
-_exit like the children in executor.c.
-
-Note for the threaded server: the descriptors closed below are this
-session's. A child forked while other sessions are open also inherits their
-sockets, and holds them until the command finishes, which keeps another
-client's connection half open after that client has left. Closing those too
-means knowing about them, which is a list of live sessions.
+executes the line the same way myshell does.
 */
 static void run_child(session_t *s, int listen_fd, int ofd, int efd) {
   pipeline_t pl;
   int devnull;
 
-  // the server ignores SIGPIPE and exec keeps that, without this yes | head
-  // has yes fail with a write error instead of just being stopped
   signal(SIGPIPE, SIG_DFL);
 
-  // fork copied every open descriptor. commands have no use for the sockets,
-  // and one left running would keep the port and the connection open
   close(listen_fd);
   close(s->client.fd);
 
-  // the client can't send input to a command, so anything reading stdin
-  // (cat with no file, sort, wc) would wait forever on the server's terminal
   devnull = open("/dev/null", O_RDONLY);
   if (devnull != -1) {
     dup2(devnull, STDIN_FILENO);
@@ -171,22 +125,17 @@ static void run_child(session_t *s, int listen_fd, int ofd, int efd) {
   close(ofd);
   close(efd);
 
-  // the spec's client shows the name of the missing command, myshell doesn't
   report_command_name = 1;
 
   /*
   parse_line keeps its token text in storage of its own that is shared
-  across the process, so it is safe here and would not be in a thread: this
-  is a child, with a copy of everything, and the only one parsing in it.
-  Parsing a command anywhere but in the child would have to be revisited.
+  across the process
   */
 
-  // a parse error has already gone to stderr, which is now the pipe, so the
-  // client sees it like any other error
+  // a parse error has already gone to stderr, which is now the pipe
   if (parse_line(s->msg, &pl) != 0 || pl.ncmds == 0)
     _exit(0);
 
-  // same check as myshell.c, so "exit now" or a quoted exit also stops it
   if (pl.ncmds == 1 && strcmp(pl.cmds[0].argv[0], "exit") == 0)
     _exit(EXIT_REQUESTED);
 
@@ -196,11 +145,6 @@ static void run_child(session_t *s, int listen_fd, int ofd, int efd) {
 
 
 /*
-Reads one pipe until every writer has closed it, logging each piece and
-passing it to the client. is_err says which of the two it is: output is
-collected into one log entry, while each piece of error text is an entry of
-its own, which is the shape the spec's figure shows.
-
 Returns 0, or -1 if the client is gone.
 */
 static int forward_output(session_t *s, int fd, int is_err, int *shown_any) {
@@ -224,15 +168,6 @@ static int forward_output(session_t *s, int fd, int is_err, int *shown_any) {
 
 /*
 Runs one command and sends its output to the client.
-
-Output is passed on as it arrives instead of being collected first, so its
-size doesn't matter and a slow command shows its output while it runs. The
-log is the other way round: the pieces are collected and the whole entry
-printed at the end, so that another client's entries cannot land in the
-middle of this one.
-
-Returns 1 to keep going, 0 if the line was an exit command, -1 if the
-client is gone.
 */
 static int run_command(session_t *s, int listen_fd) {
   int ofds[2], efds[2];
@@ -242,7 +177,7 @@ static int run_command(session_t *s, int listen_fd) {
   pid_t pid;
 
   // on any failure here the client still has to get a response, otherwise it
-  // waits forever. the session carries on, the next command may well work
+  // waits forever.
   if (pipe(ofds) == -1) {
     perror("pipe");
     return send_error(s, RUN_FAILED) == 0 ? 1 : -1;
@@ -276,11 +211,6 @@ static int run_command(session_t *s, int listen_fd) {
 
   log_output_begin(&s->client);
 
-  // read while the command runs, a pipe only holds about 64 KB so waiting
-  // for the command first would deadlock on large output
-  // stdout goes first and then stderr, so errors come after normal output
-  // stderr isn't read until stdout closes, so a command that writes more than
-  // a pipe holds to stderr while stdout is still open has to wait here
   lost = forward_output(s, ofds[READ_END], 0, &shown_any);
 
   // the output entry is printed before any error entry, so the two appear
@@ -290,7 +220,6 @@ static int run_command(session_t *s, int listen_fd) {
   if (lost == 0)
     lost = forward_output(s, efds[READ_END], 1, &shown_any);
 
-  // closed before the wait, so a command still writing gets stopped by SIGPIPE
   close(ofds[READ_END]);
   close(efds[READ_END]);
 
@@ -314,12 +243,7 @@ static int run_command(session_t *s, int listen_fd) {
 
 /*
 Serves one client until it leaves, then closes its socket and frees its
-session. Everything it touches comes from the session it is given, so this
-is the whole of one client's work and nothing outside it is involved.
-
-That is deliberate: making the server concurrent is then a matter of
-starting this on a thread per client instead of calling it, with no state
-to separate first.
+session. 
 */
 static void serve_client(session_t *s, int listen_fd) {
   size_t len;
@@ -381,9 +305,7 @@ int main(void) {
 
   /*
   A client that disappears should make a send fail rather than kill the
-  server. Without this, one client closing its connection at the wrong
-  moment would take the whole server down and every other client with it.
-  send_msg then returns -1 and only that session ends.
+  server.
   */
   signal(SIGPIPE, SIG_IGN);
 
@@ -393,11 +315,6 @@ int main(void) {
 
   log_server_started();
 
-  /*
-  The server does not stop on its own. A client sending exit or
-  disconnecting ends that session only, and this loop goes straight back to
-  waiting for the next one, which is what phase 3 asks for.
-  */
   while (1) {
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof addr;
@@ -423,13 +340,9 @@ int main(void) {
 
     client_init(&s->client, fd, &addr);
 
-    // one client at a time for now, so it is always thread 1; a thread per
-    // client is the next change and this is the number it would report
     log_client_connected(&s->client, 1);
 
     serve_client(s, listen_fd);
   }
 
-  // not reached: the loop above has no exit. the socket is left to the
-  // kernel to reclaim when the server is stopped
 }

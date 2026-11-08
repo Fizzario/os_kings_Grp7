@@ -1,14 +1,6 @@
 #!/bin/bash
 #
 # runs the client against the test server in tests/ and checks each result
-#
-# the test server is a stand in, not the real one: it answers with canned
-# replies instead of running commands, which is what makes the results
-# predictable enough to check automatically. what is being tested here is the
-# client and the framing under it, not the shell
-#
-# every case is wrapped in timeout, because the failure that matters most on
-# a socket is a HANG: a client waiting for a message that is never coming
 
 PORT_WAIT=0.5     # time to let the server bind before the client connects
 pass=0

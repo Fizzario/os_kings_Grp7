@@ -1,15 +1,8 @@
 /*
-client.c : the user facing half of the remote shell
-
 connects to the server, then repeats: show a prompt, read a command line,
 send it over the socket, wait for the output, print it.
 
-the client never parses or runs anything itself. it only moves text, so the
-command behaves exactly as it does in ./myshell because it is the same shell
-code running it, just on the other end of the socket.
-
-the session ends when the user types exit, presses ctrl+D, or the server
-goes away. since phase 3 the server serves several clients at once, so
+the client never parses or runs anything itself. since phase 3 the server serves several clients at once, so
 ending a session closes this connection only and leaves the server running
 for everyone else; the client says so on its way out.
 */
