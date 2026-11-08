@@ -34,27 +34,48 @@ start_server() {
   done
 }
 
-# 0 if the server stopped within 3 seconds, otherwise kills it and returns 1
-server_stops() {
-  for _ in $(seq 30); do
-    if ! kill -0 "$srv" 2>/dev/null; then
-      wait "$srv"
-      server_status=$?
-      return 0
-    fi
+# since phase 3 the server does not stop when a client leaves, so the suite
+# has to stop it itself rather than waiting for it to go
+# 0 while the server is still running
+server_alive() {
+  kill -0 "$srv" 2>/dev/null
+}
+
+# stops the server and reaps it, so the port is free for the next case
+stop_server() {
+  kill -TERM "$srv" 2>/dev/null
+  wait "$srv" 2>/dev/null
+  server_status=$?
+}
+
+# 0 if the server stopped on its own within 3 seconds; used only where a
+# session is expected NOT to end the server, to prove it stayed up
+server_outlives_client() {
+  sleep 0.4           # time to log the disconnect
+  server_alive
+}
+
+# waits up to 5s for no process matching $1 to be left, then reports how
+# many there are. a command the server is still reaping has not leaked, it
+# simply has not finished, so the count is taken once it has had the chance
+remaining() {
+  for _ in $(seq 50); do
+    [ "$(pgrep -u "$(id -u)" -f "^$1" | wc -l | tr -d ' ')" -eq 0 ] && break
     sleep 0.1
   done
-  kill -9 "$srv"
-  wait "$srv" 2>/dev/null
-  return 1
+  pgrep -u "$(id -u)" -f "^$1" | wc -l | tr -d ' '
 }
 
 # session <commands> [directory] - feed the commands to a client, output in $OUT
+# session <commands> [directory] - one client against a fresh server, which
+# is then stopped. $alive says whether the server was still up after the
+# client left, which since phase 3 it always should be
 session() {
   start_server "${2:-$WORK}"
   printf '%b' "$1" | timeout 30 "$ROOT/myclient" > "$OUT" 2>&1
   client_status=$?
-  if server_stops; then stopped=yes; else stopped=no; fi
+  if server_outlives_client; then alive=yes; else alive=no; fi
+  stop_server
 }
 
 # the dates and sizes in ls -l can differ between two runs
@@ -86,8 +107,7 @@ check "same output" "$(normalise "$WORK"/local.out)" "$(normalise "$WORK"/remote
 check "same files created" "$(ls "$WORK"/local)" "$(ls "$WORK"/remote)"
 check "same content in out.txt" "$(cat "$WORK"/local/out.txt)" "$(cat "$WORK"/remote/out.txt)"
 check "client exits 0" 0 "$client_status"
-check "server stops by itself" yes "$stopped"
-check "server exits 0" 0 "$server_status"
+check "server keeps running after the client leaves" yes "$alive"
 echo
 
 # ---------------------------------------------------------------------------
@@ -112,17 +132,23 @@ echo
 echo "server output from the figures in the spec"
 mkdir -p "$WORK"/figure && echo x > "$WORK"/figure/file1.txt
 session 'ls -l\nunknowncmd\nexit\n' "$WORK"/figure
+# every line but the first now names the client and the address it came
+# from, so the fixed part is matched and the address left as a wildcard
+C='\[Client #1 - 127\.0\.0\.1:[0-9]+\]'
 for expected in \
-  '[INFO] Server started, waiting for client connections...' \
-  '[INFO] Client connected.' \
-  '[RECEIVED] Received command: "ls -l" from client.' \
-  '[EXECUTING] Executing command: "ls -l"' \
-  '[OUTPUT] Sending output to client:' \
-  '[RECEIVED] Received command: "unknowncmd" from client.' \
-  '[EXECUTING] Executing command: "unknowncmd"' \
-  '[ERROR] Command not found: "unknowncmd"' \
-  '[OUTPUT] Sending error message to client: "Command not found: unknowncmd"'; do
-  check "$(printf '%.50s' "$expected")" 1 "$(grep -cxF "$expected" "$LOG")"
+  '^\[INFO\] Server started, waiting for client connections\.\.\.$' \
+  "^\[INFO\] Client #1 connected from 127\.0\.0\.1:[0-9]+\. Assigned to Thread-[0-9]+\.\$" \
+  "^\[RECEIVED\] $C Received command: \"ls -l\"\$" \
+  "^\[EXECUTING\] $C Executing command: \"ls -l\"\$" \
+  "^\[OUTPUT\] $C Sending output to client:\$" \
+  "^\[RECEIVED\] $C Received command: \"unknowncmd\"\$" \
+  "^\[EXECUTING\] $C Executing command: \"unknowncmd\"\$" \
+  "^\[ERROR\] $C Command not found: \"unknowncmd\"\$" \
+  "^\[OUTPUT\] $C Sending error message to client: \"Command not found: unknowncmd\"\$" \
+  "^\[INFO\] $C Client requested disconnect\. Closing connection\.\$" \
+  '^\[INFO\] Client #1 disconnected\.$'; do
+  check "$(printf '%.48s' "$(printf '%s' "$expected" | tr -d '\\^$')")" \
+        1 "$(grep -cE "$expected" "$LOG")"
 done
 check "client shows the error" 1 "$(grep -cxF 'Command not found: unknowncmd' "$OUT")"
 echo
@@ -136,12 +162,12 @@ check "missing file name"     1 "$(grep -c '^Output file not specified.$' "$OUT"
 echo
 
 # ---------------------------------------------------------------------------
-echo "every way the session can end stops the server"
-session 'exit\n';        check "exit" yes "$stopped"
-session '   exit   \n';  check "exit with spaces" yes "$stopped"
-session 'exit now\n';    check "exit with an argument" yes "$stopped"
-session '"exit"\n';      check "quoted exit" yes "$stopped"
-session 'echo one\n';    check "client input ends" yes "$stopped"
+echo "a session ending leaves the server running"
+session 'exit\n';        check "exit" yes "$alive"
+session '   exit   \n';  check "exit with spaces" yes "$alive"
+session 'exit now\n';    check "exit with an argument" yes "$alive"
+session '"exit"\n';      check "quoted exit" yes "$alive"
+session 'echo one\n';    check "client input ends" yes "$alive"
 
 # a client killed while a command runs. yes never stops printing, so the failed
 # send notices. sleep prints nothing, so the server notices when it ends
@@ -151,9 +177,11 @@ for cmd in 'sleep 2' 'yes'; do
   client=$!
   sleep 0.5
   kill -9 "$client"
-  if server_stops; then stopped=yes; else stopped=no; fi
-  check "client killed during $cmd" yes "$stopped"
-  check "and $cmd is not left running" 0 "$(pgrep -u "$(id -u)" -f "^$cmd" | wc -l | tr -d ' ')"
+  wait "$client" 2>/dev/null      # reap it so bash prints no job notice
+  if server_outlives_client; then alive=yes; else alive=no; fi
+  check "client killed during $cmd" yes "$alive"
+  check "and $cmd is not left running" 0 "$(remaining "$cmd")"
+  stop_server
 done
 echo
 
@@ -170,8 +198,8 @@ s.recv(4, socket.MSG_WAITALL)   # the empty message that ends the response
 s.close()
 ')
 check "60 KB command line is refused" "Command line too long." "$reply"
-server_stops
-check "and the server is fine" 0 "$server_status"
+check "and the server is fine" yes "$(server_alive && echo yes || echo no)"
+stop_server
 echo
 
 # ---------------------------------------------------------------------------
@@ -180,10 +208,29 @@ start_server "$WORK"
 "$ROOT/myserver" > "$OUT" 2>&1
 check "port in use exits 1" 1 "$?"
 check "and says why" 1 "$(grep -c 'Address already in use' "$OUT")"
-printf 'exit\n' | "$ROOT/myclient" > /dev/null 2>&1
-server_stops
-session 'echo again\nexit\n'
-check "restarts straight after a session" again "$(cat "$OUT")"
+stop_server
+echo
+
+# ---------------------------------------------------------------------------
+# the point of phase 3: one server, several clients, one after another. each
+# gets its own number and the server is still there at the end
+echo "several clients on one server"
+start_server "$WORK"
+printf 'echo one\nexit\n'  | timeout 20 "$ROOT/myclient" > "$WORK"/c1.out 2>&1
+printf 'echo two\n'         | timeout 20 "$ROOT/myclient" > "$WORK"/c2.out 2>&1
+printf 'echo three\nexit\n'| timeout 20 "$ROOT/myclient" > "$WORK"/c3.out 2>&1
+sleep 0.4
+check "first client served"  one   "$(cat "$WORK"/c1.out)"
+check "second client served" two   "$(cat "$WORK"/c2.out)"
+check "third client served"  three "$(cat "$WORK"/c3.out)"
+check "each client gets its own number" 3 \
+      "$(grep -cE '^\[INFO\] Client #[123] connected from ' "$LOG")"
+check "each disconnect is logged against its client" 3 \
+      "$(grep -cE '^\[INFO\] Client #[123] disconnected\.$' "$LOG")"
+check "numbers are not reused" 1 "$(grep -cE 'Client #3 connected' "$LOG")"
+check "server is still up after all three" yes \
+      "$(server_alive && echo yes || echo no)"
+stop_server
 echo
 
 rm -rf "$WORK" "$OUT" "$LOG"

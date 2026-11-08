@@ -1,6 +1,10 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -g
 
+# the server serves each client on its own thread, so it and anything it
+# links have to be built and linked for threads
+PTHREAD = -pthread
+
 # myshell is the local shell from phase 1 and still runs on its own
 # myclient and myserver are the two ends of the remote shell
 all: myshell myclient myserver
@@ -28,12 +32,18 @@ client.o: client.c myshell.h protocol.h
 protocol.o: protocol.c protocol.h
 	$(CC) $(CFLAGS) -c protocol.c
 
-# the server runs the same parser and executor as the local shell
-myserver: server.o parser.o executor.o protocol.o
-	$(CC) $(CFLAGS) -o myserver server.o parser.o executor.o protocol.o
+# the server runs the same parser and executor as the local shell, and adds
+# the per-client log, which needs threads
+myserver: server.o parser.o executor.o protocol.o clientlog.o
+	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o clientlog.o
 
-server.o: server.c myshell.h protocol.h
-	$(CC) $(CFLAGS) -c server.c
+server.o: server.c myshell.h protocol.h clientlog.h
+	$(CC) $(CFLAGS) $(PTHREAD) -c server.c
+
+# who each client is, and the log of what it does; one mutex keeps an entry
+# from being cut in half when several threads log at once
+clientlog.o: clientlog.c clientlog.h
+	$(CC) $(CFLAGS) $(PTHREAD) -c clientlog.c
 
 # the shell's own parser cases, from phase 1
 test: myshell
@@ -51,14 +61,22 @@ test-client: myclient tests/testserver
 test-server: myshell myclient myserver
 	bash tests/run_server_tests.sh
 
-test-all: test test-protocol test-client test-server
+# the log on its own, with many threads writing to it at once
+test-log: tests/test_clientlog
+	./tests/test_clientlog
+
+test-all: test test-protocol test-client test-log test-server
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c
+
+tests/test_clientlog: tests/test_clientlog.c clientlog.c clientlog.h
+	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_clientlog tests/test_clientlog.c clientlog.c
 
 # a stand in server, used only by the client tests; not the project's server
 tests/testserver: tests/testserver.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/testserver tests/testserver.c protocol.c
 
 clean:
-	rm -f myshell myclient myserver *.o tests/test_protocol tests/testserver
+	rm -f myshell myclient myserver *.o \
+	      tests/test_protocol tests/testserver tests/test_clientlog
