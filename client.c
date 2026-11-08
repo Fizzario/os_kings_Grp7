@@ -9,7 +9,9 @@ command behaves exactly as it does in ./myshell because it is the same shell
 code running it, just on the other end of the socket.
 
 the session ends when the user types exit, presses ctrl+D, or the server
-goes away.
+goes away. since phase 3 the server serves several clients at once, so
+ending a session closes this connection only and leaves the server running
+for everyone else; the client says so on its way out.
 */
 
 #include <stdio.h>      // printf(), fgets(), fflush(), fwrite(), getchar()
@@ -23,6 +25,26 @@ goes away.
 
 // one byte larger than the biggest payload so recv_msg can terminate it
 static char response[MAX_MSG + 1];
+
+
+/*
+Says that the session is over, the way the spec's client output shows it.
+
+Printed only when a person is at the terminal, for the same reason the
+prompt is: it is a message to the user, not part of what the commands
+produced. A piped session, such as
+
+  echo "ls -l" | ./myclient > listing.txt
+
+should leave the command's output in the file and nothing else, and the
+test suite checks the exact size of what comes back.
+*/
+static void say_goodbye(int interactive) {
+  if (interactive) {
+    printf("Disconnected from server.\n");
+    fflush(stdout);
+  }
+}
 
 
 // 1 when the line holds nothing but spaces and tabs
@@ -162,9 +184,15 @@ int main(void) {
       fflush(stdout);
     }
 
-    // ctrl+D ends the session; closing the socket is what tells the server
+    /*
+    ctrl+D ends the session. nothing is sent: closing the socket is what
+    tells the server, and the spec accepts either that or an exit command.
+    the newline finishes the prompt line the user was typing on, so the
+    message below starts on a line of its own
+    */
     if (fgets(line, sizeof(line), stdin) == NULL) {
       if (interactive) printf("\n");
+      say_goodbye(interactive);
       break;
     }
 
@@ -189,16 +217,20 @@ int main(void) {
     }
 
     /*
-    exit is forwarded rather than handled here, because the server is
-    required to shut down when it receives it
+    exit is forwarded rather than handled here. in phase 2 that was because
+    the server had to shut down on it; since phase 3 the server stays up and
+    ends only this client's session, but it still has to be told, so that it
+    can close the connection and log the disconnect against this client
+    rather than discovering it as a dropped socket
 
     it is sent trimmed, as exactly "exit", so the server can recognise it
     with a plain comparison. if the raw line went instead, a user typing
-    "  exit  " would stop the client while the server kept running, which
-    is the requirement failing quietly
+    "  exit  " would leave the server waiting for a command that is never
+    coming until the socket closed under it
     */
     if (is_exit(line)) {
       send_msg(sock, "exit", 4);
+      say_goodbye(interactive);
       break;
     }
 

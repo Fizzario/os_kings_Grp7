@@ -113,6 +113,49 @@ check "and is not sent to the server" \
 echo
 
 # ---------------------------------------------------------------------------
+echo "the end of session message"
+# the message is for a person at a terminal, so it only appears on one. the
+# client is run under a pty here, which is the only way to see it
+session_pty() {
+  ./tests/testserver > "$LOG" 2>&1 &
+  srv=$!
+  sleep $PORT_WAIT
+  python3 - "$1" > "$OUT" 2>&1 <<'PYEOF'
+import os, pty, select, sys, time
+script = sys.argv[1]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv("./myclient", ["./myclient"])
+time.sleep(0.4)
+for line in script.split("|"):
+    os.write(fd, (line + "\n").encode())
+    time.sleep(0.4)
+out = b""
+while select.select([fd], [], [], 0.5)[0]:
+    try:
+        chunk = os.read(fd, 4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    out += chunk
+os.waitpid(pid, 0)
+sys.stdout.write(out.decode(errors="replace"))
+PYEOF
+  wait $srv 2>/dev/null
+}
+
+session_pty 'echo one|exit'
+check "exit prints the disconnect message" \
+      "1" "$(grep -c 'Disconnected from server' $OUT)"
+check "the reply still came through first" \
+      "1" "$(grep -c 'stub reply line 1 for: echo one' $OUT)"
+
+session 'echo one\nexit\n'
+check "but not when the output is piped" \
+      "0" "$(grep -c 'Disconnected from server' $OUT)"
+echo
+
 echo "the server is not there"
 timeout 10 ./myclient < /dev/null > "$OUT" 2>&1
 status=$?        # captured now; a check in between would overwrite it
