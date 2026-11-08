@@ -65,7 +65,12 @@ test-server: myshell myclient myserver
 test-log: tests/test_clientlog
 	./tests/test_clientlog
 
-test-all: test test-protocol test-client test-log test-server
+# several clients against one server at once: the point of phase 3
+# checks that need one thread per client report PENDING until that is in
+test-concurrent: myserver myclient
+	bash tests/run_concurrent_tests.sh
+
+test-all: test test-protocol test-client test-log test-server test-concurrent
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c

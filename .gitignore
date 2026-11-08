@@ -1,3 +1,19 @@
 # build output
 *.o
 myshell
+myclient
+myserver
+
+# test binaries, built by the test targets
+tests/test_protocol
+tests/testserver
+
+# scratch left by the test runs
+tests/scratch/
+tests/.client_out
+tests/.server_log
+
+# debug symbols from building on mac
+*.dSYM/
+tests/test_clientlog
+tests/.concurrent/
