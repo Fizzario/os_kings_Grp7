@@ -33,7 +33,9 @@ For each command the flow is:
 
 /*
 How many connections the kernel may hold while the server is busy with
-another. 
+another. One was enough when the server stopped after a single client; now
+that it keeps going, a client arriving while another is being accepted has
+to wait somewhere rather than be refused.
 */
 #define BACKLOG 16
 
@@ -42,7 +44,10 @@ another.
 
 
 /*
-The two buffers serving clients concurrently
+Everything one connected client needs. The two buffers used to be
+file-scope, which was fine while one client was served at a time. Serving
+clients concurrently would have two sessions reading commands into the same
+msg and output into the same out, so each session carries its own.
 */
 typedef struct {
   client_t client;            // who this is, for the log
@@ -129,7 +134,9 @@ static void run_child(session_t *s, int listen_fd, int ofd, int efd) {
 
   /*
   parse_line keeps its token text in storage of its own that is shared
-  across the process
+  across the process, so it is safe here only because this is the forked
+  child, with a copy of everything and the only one parsing in it. Parsing
+  a command anywhere but in the child would have to be revisited.
   */
 
   // a parse error has already gone to stderr, which is now the pipe
@@ -243,7 +250,8 @@ static int run_command(session_t *s, int listen_fd) {
 
 /*
 Serves one client until it leaves, then closes its socket and frees its
-session. 
+session. Everything it touches comes from the session it is given, so this
+is the whole of one client's work and nothing outside it is involved.
 */
 static void serve_client(session_t *s, int listen_fd) {
   size_t len;
@@ -305,7 +313,8 @@ int main(void) {
 
   /*
   A client that disappears should make a send fail rather than kill the
-  server.
+  server. Without this, one client closing its connection at the wrong
+  moment would take the server down and every other client with it.
   */
   signal(SIGPIPE, SIG_IGN);
 

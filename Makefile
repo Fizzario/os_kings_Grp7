@@ -70,7 +70,9 @@ test-log: tests/test_clientlog
 test-concurrent: myserver myclient
 	bash tests/run_concurrent_tests.sh
 
-test-all: test test-protocol test-client test-log test-server test-concurrent
+# everything is built first, so a compile error is reported straight away
+# rather than after a suite's worth of output has scrolled past
+test-all: all test test-protocol test-client test-log test-server test-concurrent
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c

@@ -23,7 +23,8 @@ static pthread_mutex_t count_lock = PTHREAD_MUTEX_INITIALIZER;
 static int next_id = 1;
 
 
-*/
+// the text that marks an error as a missing command, recognised so the
+// name can be quoted on the [ERROR] line
 static const char NOT_FOUND[] = "Command not found: ";
 
 /*
