@@ -135,6 +135,18 @@ check "all eight disconnects were logged"      8 \
 check "the server is still up"                 yes \
       "$(kill -0 $srv 2>/dev/null && echo yes || echo no)"
 
+# every line about a client has to come after the line saying it connected.
+# the connected line is printed by main and the rest by the client's thread,
+# so printing it after starting the thread let the two swap
+early=$(awk '
+  /^\[INFO\] Client #[0-9]+ connected/ { seen[$3] = 1; next }
+  match($0, /\[Client #[0-9]+ /) {
+    id = "#" substr($0, RSTART + 9, RLENGTH - 10)
+    if (!(id in seen)) n++
+  }
+  END { print n + 0 }' "$LOG")
+check "no client is logged before it connects"  0 "$early"
+
 stop_server
 echo
 
