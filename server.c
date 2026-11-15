@@ -2,9 +2,10 @@
 
 Listens on a TCP port and serves clients, running their commands with the
 parser and executor from phase 1 and sending the output back over the
-socket. A client's session ends when it sends exit or disconnects; the
-server closes that connection, logs it, and goes back to waiting for the
-next client. It does not stop on its own.
+socket. Each client is served on a thread of its own, so several can be
+connected and running commands at the same time. A client's session ends
+when it sends exit or disconnects; the server closes that connection and
+logs it, and the other clients carry on. It does not stop on its own.
 
 For each command the flow is:
   recv_msg gets the line from the client
@@ -22,6 +23,7 @@ For each command the flow is:
 #include <unistd.h>     // close(), fork(), pipe(), dup2(), read(), _exit()
 #include <sys/wait.h>   // waitpid(), WIFEXITED, WEXITSTATUS
 #include <arpa/inet.h>  // socket(), bind(), listen(), accept(), htons(), htonl()
+#include <pthread.h>    // pthread_create(), pthread_detach()
 #include "myshell.h"    // pipeline_t, parse_line(), execute_pipeline(), MAX_LINE
 #include "protocol.h"   // send_msg(), recv_msg(), SERVER_PORT, MAX_MSG
 #include "clientlog.h"  // client_t, client_init(), the log_* entries
@@ -51,6 +53,7 @@ msg and output into the same out, so each session carries its own.
 */
 typedef struct {
   client_t client;            // who this is, for the log
+  int listen_fd;              // closed again by the command child
   char msg[MAX_MSG + 1];      // the command just received, terminated
   char out[MAX_MSG];          // one read of a command's output
 } session_t;
@@ -115,6 +118,8 @@ static void run_child(session_t *s, int listen_fd, int ofd, int efd) {
 
   signal(SIGPIPE, SIG_DFL);
 
+  // other clients' sockets are inherited too and held until the command ends;
+  // closing them would need a list of every session, so they are left
   close(listen_fd);
   close(s->client.fd);
 
@@ -308,6 +313,15 @@ static void serve_client(session_t *s, int listen_fd) {
 }
 
 
+// a thread is handed one pointer, so the session carries all it needs
+static void *client_thread(void *arg) {
+  session_t *s = arg;
+
+  serve_client(s, s->listen_fd);
+  return NULL;
+}
+
+
 int main(void) {
   int listen_fd;
 
@@ -328,6 +342,7 @@ int main(void) {
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof addr;
     session_t *s;
+    pthread_t tid;
     int fd;
 
     // the address is kept this time: the log names every client by where it
@@ -348,10 +363,23 @@ int main(void) {
     }
 
     client_init(&s->client, fd, &addr);
+    s->listen_fd = listen_fd;
 
-    log_client_connected(&s->client, 1);
+    // before the thread starts: after that the thread owns s, may log the first
+    // command ahead of this line, or free s if the client leaves at once.
+    // one thread per client, so the thread takes the client's number
+    log_client_connected(&s->client, s->client.id);
 
-    serve_client(s, listen_fd);
+    // one thread per client, so a slow command holds up only its own client
+    if (pthread_create(&tid, NULL, client_thread, s) != 0) {
+      log_info(&s->client, "Could not start a thread. Closing connection.");
+      close(fd);
+      free(s);
+      continue;
+    }
+
+    // detached: the server never stops, so nothing would ever join it
+    pthread_detach(tid);
   }
 
 }
