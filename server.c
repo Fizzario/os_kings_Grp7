@@ -363,6 +363,11 @@ int main(void) {
     client_init(&s->client, fd, &addr);
     s->listen_fd = listen_fd;
 
+    // before the thread starts: after that the thread owns s, may log the first
+    // command ahead of this line, or free s if the client leaves at once.
+    // one thread per client, so the thread takes the client's number
+    log_client_connected(&s->client, s->client.id);
+
     // one thread per client, so a slow command holds up only its own client
     if (pthread_create(&tid, NULL, client_thread, s) != 0) {
       log_info(&s->client, "Could not start a thread. Closing connection.");
@@ -373,9 +378,6 @@ int main(void) {
 
     // nothing ever waits for a client's thread, so it cleans up after itself
     pthread_detach(tid);
-
-    // one thread per client, so the thread takes the client's number
-    log_client_connected(&s->client, s->client.id);
   }
 
 }
