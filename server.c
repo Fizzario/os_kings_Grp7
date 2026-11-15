@@ -118,6 +118,8 @@ static void run_child(session_t *s, int listen_fd, int ofd, int efd) {
 
   signal(SIGPIPE, SIG_DFL);
 
+  // other clients' sockets are inherited too and held until the command ends;
+  // closing them would need a list of every session, so they are left
   close(listen_fd);
   close(s->client.fd);
 
@@ -376,7 +378,7 @@ int main(void) {
       continue;
     }
 
-    // nothing ever waits for a client's thread, so it cleans up after itself
+    // detached: the server never stops, so nothing would ever join it
     pthread_detach(tid);
   }
 
