@@ -35,11 +35,17 @@ protocol.o: protocol.c protocol.h
 
 # the server runs the same parser and executor as the local shell, and adds
 # the per-client log, which needs threads
-myserver: server.o parser.o executor.o protocol.o clientlog.o
-	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o clientlog.o
+myserver: server.o parser.o executor.o protocol.o clientlog.o task.o
+	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o clientlog.o task.o
 
 server.o: server.c myshell.h protocol.h clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c server.c
+
+# what a request becomes: its kind, its estimated running time, and the
+# state the scheduler keeps for it. the task number is handed out under a
+# lock, since two client threads can create a task at the same moment
+task.o: task.c task.h myshell.h clientlog.h
+	$(CC) $(CFLAGS) $(PTHREAD) -c task.c
 
 # who each client is, and the log of what it does; one mutex keeps an entry
 # from being cut in half when several threads log at once
@@ -74,6 +80,10 @@ test-server: myshell myclient myserver
 test-log: tests/test_clientlog
 	./tests/test_clientlog
 
+# a line in, the right kind of task and the right estimate out
+test-task: tests/test_task
+	./tests/test_task
+
 # several clients against one server at once: the point of phase 3
 # checks that need one thread per client report PENDING until that is in
 test-concurrent: myserver myclient
@@ -81,7 +91,7 @@ test-concurrent: myserver myclient
 
 # everything is built first, so a compile error is reported straight away
 # rather than after a suite's worth of output has scrolled past
-test-all: all test test-protocol test-client test-log test-server test-concurrent
+test-all: all test test-protocol test-client test-log test-task test-server test-concurrent
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c
@@ -89,10 +99,14 @@ tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 tests/test_clientlog: tests/test_clientlog.c clientlog.c clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_clientlog tests/test_clientlog.c clientlog.c
 
+tests/test_task: tests/test_task.c task.c task.h clientlog.c clientlog.h
+	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_task tests/test_task.c task.c clientlog.c
+
 # a stand in server, used only by the client tests; not the project's server
 tests/testserver: tests/testserver.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/testserver tests/testserver.c protocol.c
 
 clean:
 	rm -f myshell myclient myserver demo *.o \
-	      tests/test_protocol tests/testserver tests/test_clientlog
+	      tests/test_protocol tests/testserver tests/test_clientlog \
+	      tests/test_task
