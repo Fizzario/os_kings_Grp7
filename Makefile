@@ -35,8 +35,8 @@ protocol.o: protocol.c protocol.h
 
 # the server runs the same parser and executor as the local shell, and adds
 # the per-client log, which needs threads
-myserver: server.o parser.o executor.o protocol.o clientlog.o task.o
-	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o clientlog.o task.o
+myserver: server.o parser.o executor.o protocol.o clientlog.o task.o queue.o
+	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o clientlog.o task.o queue.o
 
 server.o: server.c myshell.h protocol.h clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c server.c
@@ -46,6 +46,12 @@ server.o: server.c myshell.h protocol.h clientlog.h
 # lock, since two client threads can create a task at the same moment
 task.o: task.c task.h myshell.h clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c task.c
+
+# the tasks waiting for a turn. one lock covers the array and is held across
+# the call that chooses, so a task cannot be cancelled between being looked
+# at and being removed
+queue.o: queue.c queue.h task.h
+	$(CC) $(CFLAGS) $(PTHREAD) -c queue.c
 
 # who each client is, and the log of what it does; one mutex keeps an entry
 # from being cut in half when several threads log at once
@@ -84,6 +90,10 @@ test-log: tests/test_clientlog
 test-task: tests/test_task
 	./tests/test_task
 
+# the queue on its own: order, choosing, cancelling and waiting
+test-queue: tests/test_queue
+	./tests/test_queue
+
 # several clients against one server at once: the point of phase 3
 # checks that need one thread per client report PENDING until that is in
 test-concurrent: myserver myclient
@@ -91,7 +101,7 @@ test-concurrent: myserver myclient
 
 # everything is built first, so a compile error is reported straight away
 # rather than after a suite's worth of output has scrolled past
-test-all: all test test-protocol test-client test-log test-task test-server test-concurrent
+test-all: all test test-protocol test-client test-log test-task test-queue test-server test-concurrent
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c
@@ -102,6 +112,9 @@ tests/test_clientlog: tests/test_clientlog.c clientlog.c clientlog.h
 tests/test_task: tests/test_task.c task.c task.h clientlog.c clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_task tests/test_task.c task.c clientlog.c
 
+tests/test_queue: tests/test_queue.c queue.c queue.h task.c task.h clientlog.c clientlog.h
+	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_queue tests/test_queue.c queue.c task.c clientlog.c
+
 # a stand in server, used only by the client tests; not the project's server
 tests/testserver: tests/testserver.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/testserver tests/testserver.c protocol.c
@@ -109,4 +122,4 @@ tests/testserver: tests/testserver.c protocol.c protocol.h
 clean:
 	rm -f myshell myclient myserver demo *.o \
 	      tests/test_protocol tests/testserver tests/test_clientlog \
-	      tests/test_task
+	      tests/test_task tests/test_queue
