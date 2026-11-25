@@ -7,7 +7,8 @@ PTHREAD = -pthread
 
 # myshell is the local shell from phase 1 and still runs on its own
 # myclient and myserver are the two ends of the remote shell
-all: myshell myclient myserver
+# demo is the program the scheduler schedules, run by a client as ./demo n
+all: myshell myclient myserver demo
 
 myshell: myshell.o parser.o executor.o
 	$(CC) $(CFLAGS) -o myshell myshell.o parser.o executor.o
@@ -44,6 +45,14 @@ server.o: server.c myshell.h protocol.h clientlog.h
 # from being cut in half when several threads log at once
 clientlog.o: clientlog.c clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c clientlog.c
+
+# a standalone program, linked against nothing of the project's own: the
+# server runs it with execvp like any other command the client might name
+demo: demo.o
+	$(CC) $(CFLAGS) -o demo demo.o
+
+demo.o: demo.c
+	$(CC) $(CFLAGS) -c demo.c
 
 # the shell's own parser cases, from phase 1
 test: myshell
@@ -85,5 +94,5 @@ tests/testserver: tests/testserver.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/testserver tests/testserver.c protocol.c
 
 clean:
-	rm -f myshell myclient myserver *.o \
+	rm -f myshell myclient myserver demo *.o \
 	      tests/test_protocol tests/testserver tests/test_clientlog

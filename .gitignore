@@ -3,6 +3,7 @@
 myshell
 myclient
 myserver
+demo
 
 # test binaries, built by the test targets
 tests/test_protocol
