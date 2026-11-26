@@ -44,6 +44,20 @@ out of the way within two turns.
 #define DEFAULT_BURST 5
 
 
+/*
+The exit status a task's child uses to say the line was an exit command.
+
+myclient trims exit before sending it, so the plain comparison in the server
+catches the usual case without running anything. "exit now", or exit inside
+quotes, is only recognisable after parsing, which happens in the child, so
+the child reports it this way instead.
+
+execute_pipeline returns nothing and the child otherwise exits 0, so a
+command's own status cannot be mistaken for this.
+*/
+#define EXIT_REQUESTED 42
+
+
 // what the line turned out to be, which decides whether it can be preempted
 typedef enum {
   TASK_SHELL,    // a command or pipeline: runs to completion once started
@@ -86,7 +100,21 @@ typedef struct {
   task_state state;
   pid_t      pid;  // the child running it, -1 while nothing is running
 
+  /*
+  The read ends of the child's output, and how many of the two have yet to
+  reach end of file. They belong to the task rather than to the runner
+  because a suspended task keeps its pipes: its output is still sitting in
+  them, waiting to be read when it is given another turn. A single set
+  shared by whatever happens to be running would be overwritten the moment
+  another task started, and the suspended one would come back to read from
+  somebody else's pipes.
+  */
+  int ofd;
+  int efd;
+  int pipes_open;
+
   size_t bytes_sent;  // output passed to the client, for the log's sent line
+  int    exit_status; // what the child exited with, -1 if it did not finish
 
   /*
   Posted once the task will not run again, whether it finished or was

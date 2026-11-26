@@ -64,13 +64,18 @@ make myserver myclient > /dev/null || { echo "build failed"; exit 1; }
 echo
 
 # ---------------------------------------------------------------------------
-# The test that tells a threaded server from one that takes clients in turn.
+# What this measures changed in phase 4.
 #
-# One client runs a command that takes three seconds. Half a second later a
-# second client connects and runs one that is instant. If each client has a
-# thread the second is served straight away and finishes in well under a
-# second. If clients are taken in turn it cannot even be accepted until the
-# first has finished, so it waits out the remaining two and a half.
+# Through phase 3 it told a threaded server from one that took clients in
+# turn: a second client arriving while a three second command ran had to be
+# served straight away. Phase 4 asks for the opposite. There is one
+# processor, a shell task runs to completion once it starts, and so a command
+# arriving behind one has to wait for it however trivial it is.
+#
+# Connecting is still immediate, and that is what is being checked here: the
+# client is accepted and its command accepted with it. What it waits for is a
+# turn on the processor, which is the scheduler doing its job rather than the
+# server failing to be concurrent.
 # ---------------------------------------------------------------------------
 echo "two clients at the same time"
 start_server
@@ -88,9 +93,9 @@ fast_ms=$(( (fast_end - fast_start) / 1000000 ))
 
 check   "the slow client got its output"  slow-done "$(tail -1 "$WORK"/slow.out)"
 check   "the fast client got its output"  fast-done "$(tail -1 "$WORK"/fast.out)"
-pending "the fast client did not wait for the slow one" \
-        yes "$([ "$fast_ms" -lt 1500 ] && echo yes || echo no)"
-printf '  %-50s %s ms\n' "(the fast client took)" "$fast_ms"
+check   "the second command waited for the first to finish" \
+        yes "$([ "$fast_ms" -gt 1500 ] && echo yes || echo no)"
+printf '  %-50s %s ms\n' "(the second command took)" "$fast_ms"
 
 stop_server
 echo
@@ -127,11 +132,11 @@ done
 check "every client got its own output"        0 "$missing"
 check "no client got another client's output"  0 "$wrong"
 check "all eight were given a number"          8 \
-      "$(grep -cE '^\[INFO\] Client #[0-9]+ connected from ' "$LOG")"
+      "$(grep -cE '^\[[0-9]+\]<<< client connected$' "$LOG")"
 check "the numbers are all different"          8 \
-      "$(grep -oE '^\[INFO\] Client #[0-9]+ connected' "$LOG" | sort -u | wc -l | tr -d ' ')"
+      "$(grep -oE '^\[[0-9]+\]<<< client connected$' "$LOG" | sort -u | wc -l | tr -d ' ')"
 check "all eight disconnects were logged"      8 \
-      "$(grep -cE '^\[INFO\] Client #[0-9]+ disconnected\.$' "$LOG")"
+      "$(grep -cE '^\[[0-9]+\]<<< client disconnected$' "$LOG")"
 check "the server is still up"                 yes \
       "$(kill -0 $srv 2>/dev/null && echo yes || echo no)"
 
@@ -139,9 +144,9 @@ check "the server is still up"                 yes \
 # the connected line is printed by main and the rest by the client's thread,
 # so printing it after starting the thread let the two swap
 early=$(awk '
-  /^\[INFO\] Client #[0-9]+ connected/ { seen[$3] = 1; next }
-  match($0, /\[Client #[0-9]+ /) {
-    id = "#" substr($0, RSTART + 9, RLENGTH - 10)
+  match($0, /^\[[0-9]+\]/) {
+    id = substr($0, 2, RLENGTH - 2)
+    if ($0 ~ /<<< client connected$/) { seen[id] = 1; next }
     if (!(id in seen)) n++
   }
   END { print n + 0 }' "$LOG")
@@ -169,17 +174,19 @@ sleep 0.5
 
 # a log line is either one of the tags, or a line of a command's output,
 # which here is a bare number or an error about a missing command
-spliced=$(grep -cvE '^(\[(INFO|RECEIVED|EXECUTING|ERROR|OUTPUT)\] |[0-9]+$|Command not found: nosuchcommand-[0-9]+$|$)' "$LOG")
+# every log line of phase 4 begins with [n] and one of the three markers;
+# anything else in the log is a command's own output or a blank separator
+spliced=$(grep -cvE '^(\[[0-9]+\](<<<|>>>|---|!!!) |-+$|\| Hello, Server Started \|$|0\)|[0-9]+$|Command not found: nosuchcommand-[0-9]+$|$)' "$LOG")
 
 check "no log line is spliced" 0 "$spliced"
 check "every client was served" 6 \
-      "$(grep -cE '^\[INFO\] Client #[0-9]+ disconnected\.$' "$LOG")"
+      "$(grep -cE '^\[[0-9]+\]<<< client disconnected$' "$LOG")"
 check "each error is attributed to one client" 6 \
-      "$(grep -cE '^\[ERROR\] \[Client #[0-9]+ - [0-9.]+:[0-9]+\] Command not found: "nosuchcommand-[0-9]+"$' "$LOG")"
+      "$(grep -cE '^\[[0-9]+\]!!! Command not found: nosuchcommand-[0-9]+$' "$LOG")"
 
 # each output entry's body must be only its own client's numbers
 badentry=$(awk '
-  /^\[OUTPUT\] \[Client #[0-9]+ - .*Sending output to client:$/ { inentry=1; next }
+  /^\[[0-9]+\]<<< [0-9]+ bytes sent$/ { inentry=1; next }
   /^\[/ { inentry=0; next }
   inentry && $0 !~ /^[0-9]*$/ { bad++ }
   END { print bad + 0 }
@@ -200,8 +207,7 @@ client "$WORK"/long.out 'sleep 3\necho survived\nexit\n' &
 long=$!
 sleep 0.3
 
-# timed, so that "was not held up" means it, rather than merely having
-# been served at some point
+# timed, so that the wait for a turn can be seen rather than guessed at
 quick_start=$(date +%s%N)
 client "$WORK"/quick.out 'echo quick\nexit\n'
 quick_ms=$(( ($(date +%s%N) - quick_start) / 1000000 ))
@@ -220,8 +226,11 @@ check   "the long client finished its work" survived "$(tail -1 "$WORK"/long.out
 check   "the quick client was served"       quick    "$(tail -1 "$WORK"/quick.out)"
 check   "the server survived a killed client" yes \
         "$(kill -0 $srv 2>/dev/null && echo yes || echo no)"
-pending "the quick client did not wait for the long one" \
-        yes "$([ "$quick_ms" -lt 1500 ] && echo yes || echo no)"
+# one processor: the quick command cannot start until the long one is over,
+# and the point of the check is that it is served afterwards rather than
+# lost, refused, or left waiting for ever
+check   "the quick client waited its turn and was served" yes \
+        "$([ "$quick_ms" -gt 1500 ] && echo yes || echo no)"
 printf '  %-50s %s ms\n' "(the quick client took)" "$quick_ms"
 
 stop_server

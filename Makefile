@@ -36,12 +36,17 @@ protocol.o: protocol.c protocol.h
 # the server runs the same parser and executor as the local shell, and adds
 # the per-client log, which needs threads
 myserver: server.o parser.o executor.o protocol.o clientlog.o task.o queue.o \
-          tasklog.o runner.o
+          tasklog.o runner.o scheduler.o
 	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o \
-	      clientlog.o task.o queue.o tasklog.o runner.o
+	      clientlog.o task.o queue.o tasklog.o runner.o scheduler.o
 
-server.o: server.c myshell.h protocol.h clientlog.h
+server.o: server.c myshell.h protocol.h clientlog.h tasklog.h task.h scheduler.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c server.c
+
+# the loop that runs tasks and the policy that chooses them. the policy is
+# gathered in three functions so the combined algorithm can replace it
+scheduler.o: scheduler.c scheduler.h queue.h runner.h tasklog.h task.h
+	$(CC) $(CFLAGS) $(PTHREAD) -c scheduler.c
 
 # what a request becomes: its kind, its estimated running time, and the
 # state the scheduler keeps for it. the task number is handed out under a
@@ -64,8 +69,7 @@ tasklog.o: tasklog.c tasklog.h task.h
 runner.o: runner.c runner.h task.h tasklog.h myshell.h protocol.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c runner.c
 
-# who each client is, and the log of what it does; one mutex keeps an entry
-# from being cut in half when several threads log at once
+# who each client is: the number the log calls it by and its address
 clientlog.o: clientlog.c clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c clientlog.c
 
@@ -93,10 +97,6 @@ test-client: myclient tests/testserver
 test-server: myshell myclient myserver
 	bash tests/run_server_tests.sh
 
-# the log on its own, with many threads writing to it at once
-test-log: tests/test_clientlog
-	./tests/test_clientlog
-
 # a line in, the right kind of task and the right estimate out
 test-task: tests/test_task
 	./tests/test_task
@@ -113,6 +113,10 @@ test-tasklog: tests/test_tasklog
 test-runner: tests/test_runner demo
 	./tests/test_runner
 
+# the three scenarios the spec asks to be demonstrated
+test-scenarios: myserver myclient demo
+	bash tests/run_scenario_tests.sh
+
 # several clients against one server at once: the point of phase 3
 # checks that need one thread per client report PENDING until that is in
 test-concurrent: myserver myclient
@@ -120,14 +124,11 @@ test-concurrent: myserver myclient
 
 # everything is built first, so a compile error is reported straight away
 # rather than after a suite's worth of output has scrolled past
-test-all: all test test-protocol test-client test-log test-task test-queue \
-          test-tasklog test-runner test-server test-concurrent
+test-all: all test test-protocol test-client test-task test-queue \
+          test-tasklog test-runner test-server test-concurrent test-scenarios
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c
-
-tests/test_clientlog: tests/test_clientlog.c clientlog.c clientlog.h
-	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_clientlog tests/test_clientlog.c clientlog.c
 
 tests/test_task: tests/test_task.c task.c task.h clientlog.c clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_task tests/test_task.c task.c clientlog.c
@@ -150,5 +151,5 @@ tests/testserver: tests/testserver.c protocol.c protocol.h
 
 clean:
 	rm -f myshell myclient myserver demo *.o \
-	      tests/test_protocol tests/testserver tests/test_clientlog \
+	      tests/test_protocol tests/testserver \
 	      tests/test_task tests/test_queue tests/test_tasklog tests/test_runner
