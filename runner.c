@@ -46,23 +46,34 @@ smallest unit any of the timing here is measured in.
 #define TICK_MS 100
 
 
-// what the pipes and the child of one running task are
-typedef struct {
-  int   ofd;        // read end of the child's stdout
-  int   efd;        // read end of the child's stderr
-  int   open_count; // how many of the two have yet to reach end of file
-} plumbing_t;
+/*
+One read of output, no larger than one message.
 
-// there is one running task at a time, so one set of plumbing is enough
-static plumbing_t pipes = { -1, -1, 0 };
-
-// one read of output, no larger than one message
+Shared rather than per task, and safe because only one task runs at a time
+and only the scheduler's thread ever reads: a suspended task is not reading
+anything, so there is never a second user of this.
+*/
 static char out[MAX_MSG];
 
 
-// whole seconds between two readings of the monotonic clock
+/*
+Milliseconds between two readings of the monotonic clock.
+
+Measured to the millisecond rather than to the second on purpose. Comparing
+only the seconds fields makes a turn that began at 0.9 and ended at 3.1 look
+like three seconds when it was barely two, which both cuts the turn short
+and under-charges the task for it. Over several turns that drift is enough
+to finish a task a whole second early.
+*/
+static long ms_between(const struct timespec *a, const struct timespec *b) {
+  return (b->tv_sec - a->tv_sec) * 1000L
+       + (b->tv_nsec - a->tv_nsec) / 1000000L;
+}
+
+
+// the same span as whole seconds, to the nearest second
 static int seconds_between(const struct timespec *a, const struct timespec *b) {
-  return (int) (b->tv_sec - a->tv_sec);
+  return (int) ((ms_between(a, b) + 500) / 1000);
 }
 
 
@@ -120,6 +131,14 @@ static void run_child(task_t *t, int listen_fd, int ofd, int efd) {
   if (parse_line(t->line, &pl) != 0 || pl.ncmds == 0)
     _exit(0);
 
+  /*
+  The same check myshell makes, so that "exit now" or an exit in quotes
+  still ends the session. Only the parser can see it, and the parser only
+  runs here, so the child reports it to the server as an exit status.
+  */
+  if (pl.ncmds == 1 && strcmp(pl.cmds[0].argv[0], "exit") == 0)
+    _exit(EXIT_REQUESTED);
+
   execute_pipeline(&pl);
   _exit(0);
 }
@@ -173,20 +192,20 @@ static int start(task_t *t, int listen_fd) {
   close(ofds[WRITE_END]);
   close(efds[WRITE_END]);
 
-  pipes.ofd = ofds[READ_END];
-  pipes.efd = efds[READ_END];
-  pipes.open_count = 2;
+  t->ofd = ofds[READ_END];
+  t->efd = efds[READ_END];
+  t->pipes_open = 2;
 
   t->pid = pid;
   return 0;
 }
 
 
-// closes whichever pipes are still open and forgets them
-static void close_pipes(void) {
-  if (pipes.ofd != -1) { close(pipes.ofd); pipes.ofd = -1; }
-  if (pipes.efd != -1) { close(pipes.efd); pipes.efd = -1; }
-  pipes.open_count = 0;
+// closes whichever of the task's pipes are still open and forgets them
+static void close_pipes(task_t *t) {
+  if (t->ofd != -1) { close(t->ofd); t->ofd = -1; }
+  if (t->efd != -1) { close(t->efd); t->efd = -1; }
+  t->pipes_open = 0;
 }
 
 
@@ -205,7 +224,7 @@ static int drain(task_t *t, int *fd, int is_err) {
     // way, since there is nothing further to be read either way
     close(*fd);
     *fd = -1;
-    pipes.open_count--;
+    t->pipes_open--;
     return 0;
   }
 
@@ -239,10 +258,10 @@ static void drain_pending(task_t *t) {
   struct pollfd fds[2];
   int n, i;
 
-  while (pipes.open_count > 0) {
+  while (t->pipes_open > 0) {
     n = 0;
-    if (pipes.ofd != -1) { fds[n].fd = pipes.ofd; fds[n].events = POLLIN; n++; }
-    if (pipes.efd != -1) { fds[n].fd = pipes.efd; fds[n].events = POLLIN; n++; }
+    if (t->ofd != -1) { fds[n].fd = t->ofd; fds[n].events = POLLIN; n++; }
+    if (t->efd != -1) { fds[n].fd = t->efd; fds[n].events = POLLIN; n++; }
 
     // 0 as the timeout: whatever is there now, and then stop
     if (n == 0 || poll(fds, (nfds_t) n, 0) <= 0)
@@ -252,11 +271,11 @@ static void drain_pending(task_t *t) {
       if (!(fds[i].revents & (POLLIN | POLLHUP)))
         continue;
 
-      if (fds[i].fd == pipes.ofd) {
-        if (drain(t, &pipes.ofd, 0) < 0) return;
+      if (fds[i].fd == t->ofd) {
+        if (drain(t, &t->ofd, 0) < 0) return;
       }
-      else if (fds[i].fd == pipes.efd) {
-        if (drain(t, &pipes.efd, 1) < 0) return;
+      else if (fds[i].fd == t->efd) {
+        if (drain(t, &t->efd, 1) < 0) return;
       }
     }
   }
@@ -287,7 +306,7 @@ run_result runner_turn(task_t *t, int listen_fd, int seconds,
 
   while (1) {
     // every process of the task has closed its output, so it is finishing
-    if (pipes.open_count == 0) {
+    if (t->pipes_open == 0) {
       why = RUN_DONE;
       break;
     }
@@ -303,14 +322,14 @@ run_result runner_turn(task_t *t, int listen_fd, int seconds,
     }
 
     now(&current);
-    if (seconds > 0 && seconds_between(&began, &current) >= seconds) {
+    if (seconds > 0 && ms_between(&began, &current) >= seconds * 1000L) {
       why = RUN_EXPIRED;
       break;
     }
 
     nfds = 0;
-    if (pipes.ofd != -1) { fds[nfds].fd = pipes.ofd; fds[nfds].events = POLLIN; nfds++; }
-    if (pipes.efd != -1) { fds[nfds].fd = pipes.efd; fds[nfds].events = POLLIN; nfds++; }
+    if (t->ofd != -1) { fds[nfds].fd = t->ofd; fds[nfds].events = POLLIN; nfds++; }
+    if (t->efd != -1) { fds[nfds].fd = t->efd; fds[nfds].events = POLLIN; nfds++; }
 
     /*
     Waiting with a timeout rather than reading until the pipes close. A
@@ -328,8 +347,8 @@ run_result runner_turn(task_t *t, int listen_fd, int seconds,
       if (!(fds[i].revents & (POLLIN | POLLHUP | POLLERR)))
         continue;
 
-      if (fds[i].fd == pipes.ofd && drain(t, &pipes.ofd, 0) < 0) lost = 1;
-      else if (fds[i].fd == pipes.efd && drain(t, &pipes.efd, 1) < 0) lost = 1;
+      if (fds[i].fd == t->ofd && drain(t, &t->ofd, 0) < 0) lost = 1;
+      else if (fds[i].fd == t->efd && drain(t, &t->efd, 1) < 0) lost = 1;
     }
   }
 
@@ -342,10 +361,11 @@ run_result runner_turn(task_t *t, int listen_fd, int seconds,
     nobody had waited for.
     */
     waitpid(t->pid, &status, 0);
-    close_pipes();
+    close_pipes(t);
 
     t->pid = -1;
     t->state = TASK_DONE;
+    t->exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     if (t->remaining > 0)
       t->remaining = 0;
 
@@ -375,10 +395,11 @@ run_result runner_turn(task_t *t, int listen_fd, int seconds,
       arriving. There is nothing left to stop, so it is done after all.
       */
       drain_pending(t);
-      close_pipes();
+      close_pipes(t);
 
       t->pid = -1;
       t->state = TASK_DONE;
+      t->exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
       t->remaining = 0;
 
       if (!lost)
@@ -421,6 +442,6 @@ void runner_kill(task_t *t) {
     t->pid = -1;
   }
 
-  close_pipes();
+  close_pipes(t);
   t->state = TASK_DONE;
 }

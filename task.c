@@ -155,7 +155,11 @@ int task_init(task_t *t, client_t *c, const char *line) {
   t->turns     = 0;
   t->state     = TASK_READY;
   t->pid       = -1;
+  t->ofd       = -1;
+  t->efd       = -1;
+  t->pipes_open = 0;
   t->bytes_sent = 0;
+  t->exit_status = -1;
 
   // the caller has already refused anything at or over MAX_LINE, so this
   // only guards against the line arriving from somewhere that had not

@@ -8,13 +8,18 @@ demo
 # test binaries, built by the test targets
 tests/test_protocol
 tests/testserver
+tests/test_task
+tests/test_queue
+tests/test_tasklog
+tests/test_runner
 
 # scratch left by the test runs
+tests/.scenario_log
+tests/.scenario_client*
 tests/scratch/
 tests/.client_out
 tests/.server_log
 
 # debug symbols from building on mac
 *.dSYM/
-tests/test_clientlog
 tests/.concurrent/

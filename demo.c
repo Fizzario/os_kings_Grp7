@@ -22,7 +22,7 @@ starting again. that is handled by the kernel and needs no support here
 #include <stdlib.h>  // strtol(), EXIT_SUCCESS, EXIT_FAILURE
 #include <errno.h>   // errno, ERANGE
 #include <limits.h>  // INT_MAX
-#include <unistd.h>  // sleep()
+#include <time.h>    // nanosleep(), struct timespec
 
 // an hour of simulated work is far more than any test needs, and refusing
 // anything larger keeps a mistyped argument from occupying the scheduler
@@ -31,18 +31,44 @@ starting again. that is handled by the kernel and needs no support here
 
 
 /*
-sleeps for one second, no matter what interrupts it
+how finely the one second wait is cut up, in milliseconds
 
-a run is paused with SIGSTOP and resumed with SIGCONT, and SIGCONT can cut a
-sleep short: sleep() then returns the number of seconds it had left instead of
-0. sleeping again for exactly that remainder means a pause costs the run only
-the time it was stopped, and the seconds printed stay one second apart
+a pause costs the run whatever was left of the slice it was in when it
+stopped, so twenty short waits lose at most a twentieth of a second where
+one long one loses up to a whole second. see sleep_one_second below
+*/
+#define SLICE_MS 50
+
+
+/*
+sleeps for one second, in slices, so that being paused costs almost nothing
+
+a run is paused with SIGSTOP and continued with SIGCONT. a sleep is not
+suspended along with the process: the kernel works out when it should end
+when it begins, and the time spent stopped counts against that, so a sleep
+with half a second to go that is stopped for five seconds comes back and
+returns at once. the half second of work it was in the middle of is gone,
+and the program finishes that much sooner than the seconds it was asked for
+
+there is no way to ask for a sleep that stops with the process, so the
+second is cut into slices instead. a pause can only cost whatever was left
+of the slice it interrupted, and the rest of the second is still waited for
+afterwards, which keeps a paused run honest to within a fraction of a second
+
+nanosleep rather than sleep throughout, because it reports what it had left
+to the nanosecond where sleep reports it in whole seconds and would round a
+part-finished slice away to nothing
 */
 static void sleep_one_second(void) {
-  unsigned int left = 1;
+  int slices = 1000 / SLICE_MS;
+  int i;
 
-  while (left > 0)
-    left = sleep(left);
+  for (i = 0; i < slices; i++) {
+    struct timespec left = { 0, SLICE_MS * 1000000L }, rest;
+
+    while (nanosleep(&left, &rest) == -1 && errno == EINTR)
+      left = rest;
+  }
 }
 
 

@@ -132,24 +132,30 @@ echo
 echo "server output from the figures in the spec"
 mkdir -p "$WORK"/figure && echo x > "$WORK"/figure/file1.txt
 session 'ls -l\nunknowncmd\nexit\n' "$WORK"/figure
-# every line but the first now names the client and the address it came
-# from, so the fixed part is matched and the address left as a wildcard
-C='\[Client #1 - 127\.0\.0\.1:[0-9]+\]'
+# phase 4 replaced the log with the denser format its screenshots show:
+# every line is prefixed with the client's number, and a task reports its
+# states and the work it has left rather than the server narrating each step
 for expected in \
-  '^\[INFO\] Server started, waiting for client connections\.\.\.$' \
-  "^\[INFO\] Client #1 connected from 127\.0\.0\.1:[0-9]+\. Assigned to Thread-[0-9]+\.\$" \
-  "^\[RECEIVED\] $C Received command: \"ls -l\"\$" \
-  "^\[EXECUTING\] $C Executing command: \"ls -l\"\$" \
-  "^\[OUTPUT\] $C Sending output to client:\$" \
-  "^\[RECEIVED\] $C Received command: \"unknowncmd\"\$" \
-  "^\[EXECUTING\] $C Executing command: \"unknowncmd\"\$" \
-  "^\[ERROR\] $C Command not found: \"unknowncmd\"\$" \
-  "^\[OUTPUT\] $C Sending error message to client: \"Command not found: unknowncmd\"\$" \
-  "^\[INFO\] $C Client requested disconnect\. Closing connection\.\$" \
-  '^\[INFO\] Client #1 disconnected\.$'; do
+  '^\| Hello, Server Started \|$' \
+  '^\[1\]<<< client connected$' \
+  '^\[1\]>>> ls -l$' \
+  '^\[1\]>>> unknowncmd$' \
+  '^\[1\]!!! Command not found: unknowncmd$' \
+  '^\[1\]>>> exit$' \
+  '^\[1\]<<< client disconnected$'; do
   check "$(printf '%.48s' "$(printf '%s' "$expected" | tr -d '\\^$')")" \
         1 "$(grep -cE "$expected" "$LOG")"
 done
+# both commands of the session produce these, so each appears twice
+for expected in \
+  '^\[1\]--- created \(-1\)$' \
+  '^\[1\]--- started \(-1\)$' \
+  '^\[1\]<<< [0-9]+ bytes sent$' \
+  '^\[1\]--- ended \(-1\)$'; do
+  check "$(printf '%.48s' "$(printf '%s' "$expected" | tr -d '\\^$')") twice" \
+        2 "$(grep -cE "$expected" "$LOG")"
+done
+
 check "client shows the error" 1 "$(grep -cxF 'Command not found: unknowncmd' "$OUT")"
 echo
 
@@ -224,10 +230,10 @@ check "first client served"  one   "$(cat "$WORK"/c1.out)"
 check "second client served" two   "$(cat "$WORK"/c2.out)"
 check "third client served"  three "$(cat "$WORK"/c3.out)"
 check "each client gets its own number" 3 \
-      "$(grep -cE '^\[INFO\] Client #[123] connected from ' "$LOG")"
+      "$(grep -cE '^\[[123]\]<<< client connected$' "$LOG")"
 check "each disconnect is logged against its client" 3 \
-      "$(grep -cE '^\[INFO\] Client #[123] disconnected\.$' "$LOG")"
-check "numbers are not reused" 1 "$(grep -cE 'Client #3 connected' "$LOG")"
+      "$(grep -cE '^\[[123]\]<<< client disconnected$' "$LOG")"
+check "numbers are not reused" 1 "$(grep -cE '^\[3\]<<< client connected$' "$LOG")"
 check "server is still up after all three" yes \
       "$(server_alive && echo yes || echo no)"
 stop_server

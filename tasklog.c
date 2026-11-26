@@ -123,12 +123,22 @@ static struct timespec summary_origin;
 static pthread_mutex_t sum_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
-// whole seconds since the clock started, which is what the format shows
+/*
+Whole seconds since the clock started, which is what the format shows.
+
+Worked out from the milliseconds and then rounded, rather than by
+subtracting the seconds fields. A turn that ran from 2.9 to 5.9 has taken
+three seconds, and comparing only the seconds would call it two.
+*/
 static int elapsed_seconds(void) {
   struct timespec now;
+  long ms;
 
   clock_gettime(CLOCK_MONOTONIC, &now);
-  return (int) (now.tv_sec - summary_origin.tv_sec);
+  ms = (now.tv_sec - summary_origin.tv_sec) * 1000L
+     + (now.tv_nsec - summary_origin.tv_nsec) / 1000000L;
+
+  return (int) ((ms + 500) / 1000);
 }
 
 
