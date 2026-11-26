@@ -35,8 +35,10 @@ protocol.o: protocol.c protocol.h
 
 # the server runs the same parser and executor as the local shell, and adds
 # the per-client log, which needs threads
-myserver: server.o parser.o executor.o protocol.o clientlog.o task.o queue.o
-	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o clientlog.o task.o queue.o
+myserver: server.o parser.o executor.o protocol.o clientlog.o task.o queue.o \
+          tasklog.o runner.o
+	$(CC) $(CFLAGS) $(PTHREAD) -o myserver server.o parser.o executor.o protocol.o \
+	      clientlog.o task.o queue.o tasklog.o runner.o
 
 server.o: server.c myshell.h protocol.h clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c server.c
@@ -52,6 +54,15 @@ task.o: task.c task.h myshell.h clientlog.h
 # at and being removed
 queue.o: queue.c queue.h task.h
 	$(CC) $(CFLAGS) $(PTHREAD) -c queue.c
+
+# the phase 4 log lines and the execution summary. one lock keeps a line
+# whole, a second one guards the summary being built up
+tasklog.o: tasklog.c tasklog.h task.h
+	$(CC) $(CFLAGS) $(PTHREAD) -c tasklog.c
+
+# running a task for a turn: fork, pipes, SIGSTOP, SIGCONT and waitpid
+runner.o: runner.c runner.h task.h tasklog.h myshell.h protocol.h
+	$(CC) $(CFLAGS) $(PTHREAD) -c runner.c
 
 # who each client is, and the log of what it does; one mutex keeps an entry
 # from being cut in half when several threads log at once
@@ -94,6 +105,14 @@ test-task: tests/test_task
 test-queue: tests/test_queue
 	./tests/test_queue
 
+# the phase 4 log lines, compared against the format the spec requires
+test-tasklog: tests/test_tasklog
+	./tests/test_tasklog
+
+# a task run in turns: stopped on time, resumed where it stopped
+test-runner: tests/test_runner demo
+	./tests/test_runner
+
 # several clients against one server at once: the point of phase 3
 # checks that need one thread per client report PENDING until that is in
 test-concurrent: myserver myclient
@@ -101,7 +120,8 @@ test-concurrent: myserver myclient
 
 # everything is built first, so a compile error is reported straight away
 # rather than after a suite's worth of output has scrolled past
-test-all: all test test-protocol test-client test-log test-task test-queue test-server test-concurrent
+test-all: all test test-protocol test-client test-log test-task test-queue \
+          test-tasklog test-runner test-server test-concurrent
 
 tests/test_protocol: tests/test_protocol.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/test_protocol tests/test_protocol.c protocol.c
@@ -115,6 +135,15 @@ tests/test_task: tests/test_task.c task.c task.h clientlog.c clientlog.h
 tests/test_queue: tests/test_queue.c queue.c queue.h task.c task.h clientlog.c clientlog.h
 	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_queue tests/test_queue.c queue.c task.c clientlog.c
 
+tests/test_tasklog: tests/test_tasklog.c tasklog.c tasklog.h task.c task.h clientlog.c
+	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_tasklog tests/test_tasklog.c \
+	      tasklog.c task.c clientlog.c
+
+tests/test_runner: tests/test_runner.c runner.c runner.h tasklog.c task.c clientlog.c \
+                   protocol.c parser.c executor.c
+	$(CC) $(CFLAGS) $(PTHREAD) -I. -o tests/test_runner tests/test_runner.c \
+	      runner.c tasklog.c task.c clientlog.c protocol.c parser.c executor.c
+
 # a stand in server, used only by the client tests; not the project's server
 tests/testserver: tests/testserver.c protocol.c protocol.h
 	$(CC) $(CFLAGS) -I. -o tests/testserver tests/testserver.c protocol.c
@@ -122,4 +151,4 @@ tests/testserver: tests/testserver.c protocol.c protocol.h
 clean:
 	rm -f myshell myclient myserver demo *.o \
 	      tests/test_protocol tests/testserver tests/test_clientlog \
-	      tests/test_task tests/test_queue
+	      tests/test_task tests/test_queue tests/test_tasklog tests/test_runner
